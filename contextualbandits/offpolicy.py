@@ -12,8 +12,8 @@ class DoublyRobustEstimator:
     were chosen, and converts the problem to const-sensitive classification, on which the
     base algorithm is then fit.
     
-    Note 1
-    ------
+    Note
+    ----
     This technique converts the problem into a cost-sensitive classification problem
     by calculating a matrix of expected rewards and turning it into costs. The base
     algorithm is then fit to this data, using either the Weighted All-Pairs approach,
@@ -30,10 +30,9 @@ class DoublyRobustEstimator:
     but here it is used for the case of discrete rewards {0,1}, under which it performs
     poorly. It is not recommended to use, but provided for comparison purposes.
     
-    Note 2
-    ------
-    This method requires to form reward estimates of all arms for each observation. In order to do so,
-    you can either provide estimates as an array (see Parameters), or pass a model.
+    
+    Alo important: this method requires to form reward estimates of all arms for each observation. In order to
+    do so, you can either provide estimates as an array (see Parameters), or pass a model.
     
     One method to obtain reward estimates is to fit a model to the data and use its predictions as
     reward estimates. You can do so by passing an object of class

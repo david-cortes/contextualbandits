@@ -257,7 +257,7 @@ class SeparateClassifiers:
     Fits one classifier per arm using only the data on which that arm was chosen.
     Predicts as One-Vs-Rest.
     
-    Paramteres
+    Parameters
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
