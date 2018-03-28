@@ -90,6 +90,8 @@ Some of the policies here such as `AdaptiveGreedy` haven't been yet evaluated or
 Note that the algorithms are meant for an "online" scenario in the sense of needing to make decisions in real time and receive feedback shortly afterwards, but most of them still require to be refit to all historical data every time rather than being "online" in the sense of being fit to batches of data as they come. Implementations of truly online algorithms (other than LinUCB) to follow in the future.
 
 
+![image](plots/bibtex_results.png "bibtex_simulation")
+
 ## Some comments
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
