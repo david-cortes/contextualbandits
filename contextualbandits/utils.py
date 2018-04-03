@@ -362,3 +362,45 @@ class _BayesianOneVsRest:
 
 def _calculate_beta_prior(nchoices):
     return (3/nchoices,4)
+
+class _LinUCBSingle:
+    def __init__(self, alpha):
+        self.alpha=alpha
+        
+    def fit(self, X, y):
+        if len(X.shape)==1:
+            X=X.reshape(1,-1)
+        self.Ainv=np.eye(X.shape[1])
+        self.b=np.zeros((X.shape[1], 1))
+        
+        self.partial_fit(X,y)
+    
+    def partial_fit(self, X, y):
+        if len(X.shape)==1:
+            X=X.reshape(1,-1)
+        sumb=np.zeros((X.shape[1], 1))
+        for i in range(X.shape[0]):
+            x=X[i,:].reshape(-1,1)
+            r=y[i]
+            sumb+=r*x
+            
+            self.Ainv -= np.linalg.multi_dot([self.Ainv, x, x.T, self.Ainv])/\
+                            (1 + np.linalg.multi_dot([x.T, self.Ainv, x]))
+        
+        self.b+=sumb
+    
+    def predict(self, X, exploit=False):
+        if len(X.shape)==1:
+            X=X.reshape(1,-1)
+        
+        pred=self.Ainv.dot(self.b).T.dot(X.T).reshape(-1)
+        
+        if not exploit:
+            return pred
+        
+        for i in range(X.shape[0]):
+            x=X[i,:].reshape(-1,1)
+            cb=self.alpha*np.sqrt(np.linalg.multi_dot([x.T, self.Ainv, x]))
+            pred[i]+=cb[0]
+        
+        return pred

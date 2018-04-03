@@ -1,6 +1,6 @@
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, _check_fit_input, _check_X_input,\
             _check_1d_inp, _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
-            _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression
+            _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression, _LinUCBSingle
 import warnings
 from sklearn.linear_model import LogisticRegression
 import pandas as pd, numpy as np
@@ -1171,9 +1171,10 @@ class LinUCB:
     
     Note
     ----
-    The formula described in the paper where this algorithm first appeared had dimensions
-    that didn't match to an array of predictions. I assumed that the (n x n) matrix that
-    results inside a square root was to be summed by rows.
+    The formula here is implemented in a loop per observation for both fitting and predicting.
+    The A matrix in the formulas are not inverted after each updte, but rather, only their inverse is stored
+    and is updated after each observation using the Sherman-Morrison formula.
+    Thus, updating is quite fast, but there is no speed-up in doing batch updates.
     
     Parameters
     ----------
@@ -1188,9 +1189,9 @@ class LinUCB:
     """
     def __init__(self, nchoices, alpha=1.0):
         _check_constructor_input(_ZeroPredictor(),nchoices)
-        self.nchoices = nchoices
-        self._oracles=[[None,None,None] for n in range(nchoices)] # A, b, theta
         self.alpha=alpha
+        self.nchoices=nchoices
+        self._oracles=[LinUCBSingle(self.alpha) for n in range(nchoices)]
     
     def fit(self, X, a, r):
         """"
@@ -1214,19 +1215,10 @@ class LinUCB:
         """
         X,a,r=_check_fit_input(X,a,r)
         self.ndim = X.shape[1]
-        for choice in range(self.nchoices):
-            this_choice=a==choice
-            xclass=X[this_choice,:]
-            yclass=r[this_choice]
-            self._oracles[choice][0]=np.eye(self.ndim)
-            self._oracles[choice][1]=np.zeros((self.ndim,1))
-            
-            if xclass.shape[0]>0:
-                self._oracles[choice][0]+=xclass.T.dot(xclass)
-                self._oracles[choice][1]+=xclass.T.dot(yclass).reshape(-1,1)
-                
-            self._oracles[choice][2]=np.linalg.solve(self._oracles[choice][0], self._oracles[choice][1])
-            
+        for n in range(nchoices):
+            this_action=a==n
+            self._oracles[n].fit(X[this_action,:],r[this_action].astype('float64'))
+
         return self
                 
     def partial_fit(self, X, a, r):
@@ -1249,15 +1241,9 @@ class LinUCB:
         """
         X,a,r=_check_fit_input(X,a,r)
         assert X.shape[1]==self.ndim
-        for choice in range(self.nchoices):
-            this_choice=a==choice
-            xclass=X[this_choice,:]
-            yclass=r[this_choice]
-            if xclass.shape[0]>0:
-                self._oracles[choice][0]+=xclass.T.dot(xclass)
-                self._oracles[choice][1]+=xclass.T.dot(yclass).reshape(-1,1)
-                
-            self._oracles[choice][2]=np.linalg.solve(self._oracles[choice][0], self._oracles[choice][1])
+        for n in range(nchoices):
+            this_action=a==n
+            self._oracles[n].partial_fit(X[this_action,:], r[this_action].astype('float64'))
             
         return self
     
@@ -1281,13 +1267,7 @@ class LinUCB:
         X=_check_X_input(X)
         pred=np.zeros((X.shape[0],self.nchoices))
         for choice in range(self.nchoices):
-            pt1=self._oracles[choice][2].T.dot(X.T)
-            if exploit:
-                pred[:,choice]=pt1.reshape(-1)
-            else:
-                inside_sqrt_23=np.linalg.solve(self._oracles[choice][0],X.T)
-                inside_sqrt_123=X.dot(inside_sqrt_23)
-                pred[:,choice]=pt1.reshape(-1)+self.alpha*np.sqrt(np.sum(inside_sqrt_123,axis=1).reshape(-1))
+            pred[:,choice]=self._oracles[choice].predict(X, exploit)
         return np.argmax(pred, axis=1)
 
 class BayesianUCB:
