@@ -36,6 +36,13 @@ Three of the main problematics that arise in contextual bandits are:
 * Building a policy/algorithm with data collected from a different policy, covered in `contextualbandits.offpolicy`.
 * Evaluating the performance of different strategies/policies/algorithms based on partially-labeled data, covered in `contextualbandits.evaluation`.
 
+Other interesting topics in contextual bandits not covered here include:
+
+* Incorporating social networks and similarity information between observations and/or arms – for some implementations of methods dealing with similarity information see [BanditLib](https://github.com/huazhengwang/BanditLib)
+* Bandits with “expert advise” (e.g. Exp4, OnlineCover)
+* Online clustering (used for defining similarity buckets)
+
+
 For more information, see the user guides below.
 
 Most of the algorithms here are meta-heuristics that take a binary classifier as a base, such as Logistic Regression.
@@ -64,7 +71,7 @@ Implementations in this package include:
  
 
 Online:
-* LinUCB (see [1]) 
+* LinUCB (see [1] and [10]) 
 
 Adaptations from multi-armed bandits strategies:
 * Upper-confidence Bound (see [5] and [2])
@@ -116,3 +123,5 @@ Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (
 [8] Dudík, M., Langford, J., & Li, L. (2011). Doubly robust policy evaluation and learning. arXiv preprint arXiv:1103.4601.
 
 [9] Dudík, M., Erhan, D., Langford, J., & Li, L. (2014). Doubly robust policy evaluation and optimization. Statistical Science, 485-511.
+
+[10] Chu, W., Li, L., Reyzin, L., & Schapire, R. (2011, June). Contextual bandits with linear payoff functions. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (pp. 208-214).
