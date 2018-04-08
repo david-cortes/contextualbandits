@@ -27,7 +27,7 @@ The problem is very similar to multi-class or multi-label classification (with t
 
 Examples of such scenarios include online advertising, where we only know whether a user clicked an ad that he was presented with, but don't know which other ads he would have clicked; or clinic trials where we know how a person responded to a treatment, but don't know how he would have responded to a different treatment.
 
-While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, *this package deals only with the case of discrete rewards `{0,1}`*, and only with the case of arms that all share the same features.
+While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, **this package deals only with the case of discrete rewards `{0,1}`**, and only with the case of arms that all share the same features.
  
 
 Three of the main problematics that arise in contextual bandits are:

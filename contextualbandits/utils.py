@@ -1,11 +1,18 @@
-import numpy as np, pandas as pd
-from sklearn.linear_model import LogisticRegression
+import numpy as np
 from copy import deepcopy
 
-def _check_constructor_input(base_algorithm,nchoices):
+def _check_bools(batch_train=False,smooth_predictions=False,assume_unique_reward=False):
+    assert isinstance(batch_train, bool)
+    assert isinstance(smooth_predictions, bool)
+    assert isinstance(assume_unique_reward, bool)
+    return batch_train,smooth_predictions,assume_unique_reward
+
+def _check_constructor_input(base_algorithm,nchoices,batch_train=False):
     assert nchoices>2
     assert isinstance(nchoices, int)
     assert ('fit' in dir(base_algorithm)) and ('predict' in dir(base_algorithm))
+    if batch_train:
+        assert 'partial_fit' in dir(base_algorithm)
     return None
 
 def _check_beta_prior(beta_prior, nchoices, default_b):
@@ -33,7 +40,7 @@ def _check_fit_input(X,a,r):
     return X,a,r
 
 def _check_X_input(X):
-    if type(X)==pd.core.frame.DataFrame:
+    if type(X).__name__=='DataFrame':
         X=X.as_matrix()
     if type(X)==np.matrixlib.defmatrix.matrix:
         X=np.array(X)
@@ -45,7 +52,7 @@ def _check_X_input(X):
     return X
 
 def _check_1d_inp(y):
-    if type(y)==pd.core.frame.DataFrame:
+    if type(y).__name__=='DataFrame' or type(y).__name__=='Series':
         y=y.as_matrix()
     if type(y)==np.matrixlib.defmatrix.matrix:
         y=np.array(y)
@@ -153,14 +160,28 @@ class _RandomPredictor:
         return -np.log((1-pred)/pred)
 
 class _ArrBSClassif:
-    def __init__(self,base,X,a,r,n,thr,alpha,beta,samples):
+    def __init__(self,base,X,a,r,n,thr,alpha,beta,samples,smooth=False,assume_un=False,
+                 partialfit=False,partial_method='gamma'):
         self.base=base
         self.algos=[[deepcopy(base) for i in range(samples)] for j in range(n)]
         self.n=n
         self.samples=samples
+        self.partial_method=partial_method
+        self.smooth=smooth
+        if smooth:
+            self.counters=np.zeros((1,n))
         for choice in range(n):
-            this_choice=(a==choice)
-            yclass=r[this_choice]
+            if assume_un:
+                this_choice=(a==choice)
+                arms_w_rew=(r==1)
+                yclass=r[this_choice|arms_w_rew]
+                yclass[arms_w_rew&(~this_choice)]=0
+                this_choice=this_choice|arms_w_rew
+            else:
+                this_choice=(a==choice)
+                yclass=r[this_choice]
+            if smooth:
+                self.counters[0,n]+=yclass.shape[0]
             n_pos=yclass.sum()
             if n_pos<thr:
                 self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
@@ -180,6 +201,33 @@ class _ArrBSClassif:
                     self.algos[choice][sample].fit(xsample,ysample)
                 else:
                     self.algos[choice][sample]=_ZeroPredictor()
+                    
+    def partial_fit(self,X,a,r):
+        for choice in range(n):
+            if assume_un:
+                this_choice=(a==choice)
+                arms_w_rew=(r==1)
+                yclass=r[this_choice|arms_w_rew]
+                yclass[arms_w_rew&(~this_choice)]=0
+                this_choice=this_choice|arms_w_rew
+            else:
+                this_choice=(a==choice)
+                yclass=r[this_choice]
+
+            if smooth:
+                self.counters[0,n]+=yclass.shape[0]
+
+            xclass=X[this_choice,:]
+            
+            for sample in range(samples):
+                if self.partial_method=='poisson':
+                    appear_times=np.random.poisson(1, size=xclass.shape[0])
+                    xsample=np.repeat(xclass, appear_times)
+                    ysample=np.repeat(yclass, appear_times)
+                    self.algos[choice][sample].partial_fit(xsample,ysample,classes=[0,1])
+                else:
+                    self.algos[choice][sample].partial_fit(xclass,yclass,
+                            classes=[0,1],sample_weight=np.random.gamma(2,2,size=xclass.shape[0]))
     
     def score_avg(self,X):
         preds=np.zeros((X.shape[0],self.n))
@@ -196,6 +244,10 @@ class _ArrBSClassif:
                     except:
                         preds[:,choice]+=self.algos[choice][sample].predict(X)
             preds[:,choice]=preds[:,choice]/self.samples
+        
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
+        
         return preds
     
     def score_max(self,X,perc=100):
@@ -219,6 +271,10 @@ class _ArrBSClassif:
                 preds[:,choice]=np.vstack(arr_compare).max(axis=0)
             else:
                 preds[:,choice]=np.percentile(np.vstack(arr_compare), perc, axis=0)
+        
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
+        
         return preds
     
     def score_rnd(self,X):
@@ -229,27 +285,67 @@ class _ArrBSClassif:
                 continue
             sample_take=np.random.randint(self.samples)
             preds[:,choice]=self.algos[choice][sample_take].predict(X)
+        
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
+        
         return preds
     
 class _OneVsRest:
-    def __init__(self,base,X,a,r,n,thr,alpha,beta):
+    def __init__(self,base,X,a,r,n,thr,alpha,beta,smooth=False,assume_un=False,partialfit=False):
         self.base=base
         self.n=n
         self.algos=[deepcopy(base) for i in range(n)]
+        self.smooth=smooth
+        if smooth:
+            self.counters=np.zeros((1,n))
+            
+        if partialfit:
+            self.partial_fit(X,a,r)
+        else:
+            for choice in range(n):
+                if assume_un:
+                    this_choice=(a==choice)
+                    arms_w_rew=(r==1)
+                    yclass=r[this_choice|arms_w_rew]
+                    yclass[arms_w_rew&(~this_choice)]=0
+                    this_choice=this_choice|arms_w_rew
+                else:
+                    this_choice=(a==choice)
+                    yclass=r[this_choice]
+                n_pos=yclass.sum()
+                if smooth:
+                    self.counters[0,n]+=yclass.shape[0]
+                if n_pos<thr:
+                    self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
+                    continue
+                if n_pos==yclass.shape[0]:
+                    self.algos[choice]=_OnePredictor()
+                    continue
+                if (n_pos==0) and (thr<1):
+                    self.algos[choice]=_ZeroPredictor()
+                xclass=X[this_choice,:]
+                self.algos[choice].fit(xclass,yclass)
+                
+    def partial_fit(self,X,a,r):
         for choice in range(n):
-            this_choice=(a==choice)
-            yclass=r[this_choice]
-            n_pos=yclass.sum()
-            if n_pos<thr:
-                self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
-                continue
-            if n_pos==yclass.shape[0]:
-                self.algos[choice]=_OnePredictor()
-                continue
-            if (n_pos==0) and (thr<1):
-                self.algos[choice]=_ZeroPredictor()
+            if assume_un:
+                this_choice=(a==choice)
+                arms_w_rew=(r==1)
+                yclass=r[this_choice|arms_w_rew]
+                yclass[arms_w_rew&(~this_choice)]=0
+                this_choice=this_choice|arms_w_rew
+            else:
+                this_choice=(a==choice)
+                yclass=r[this_choice]
+
+            if smooth:
+                self.counters[0,n]+=yclass.shape[0]
+
             xclass=X[this_choice,:]
-            self.algos[choice].fit(xclass,yclass)
+            self.algos[choice].partial_fit(xclass,yclass,classes=[0,1])
+            
+            
     
     def decision_function(self,X):
         preds=np.zeros((X.shape[0],self.n))
@@ -258,6 +354,8 @@ class _OneVsRest:
                 preds[:,choice]=self.algos[choice].decision_function(X)
             except:
                 preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
         return preds
     
     def predict_proba(self,X):
@@ -276,12 +374,19 @@ class _OneVsRest:
             preds=np.exp(preds - preds.max(axis=1).reshape(-1,1))
             preds=preds/preds.sum(axis=1).reshape(-1,1)
             
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
+            
         return preds
     
     def predict_proba_raw(self,X):
         preds=np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
                 preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
+                
+        if self.smooth:
+            preds=(preds*self.counters+1)/(self.counters+2)
+                
         return preds
     
     def predict(self,X):
@@ -289,7 +394,7 @@ class _OneVsRest:
     
 class _BayesianLogisticRegression:
     def __init__(self,X,y,method='advi'):
-        import pymc3 as pm
+        import pymc3 as pm, pandas as pd
         X=_check_X_input(X)
         y=_check_1d_inp(y)
         assert X.shape[0]==y.shape[0]
@@ -378,6 +483,9 @@ class _LinUCBSingle:
     def partial_fit(self, X, y):
         if len(X.shape)==1:
             X=X.reshape(1,-1)
+        if 'Ainv' not in dir(self):
+            self.Ainv=np.eye(X.shape[1])
+            self.b=np.zeros((X.shape[1], 1))
         sumb=np.zeros((X.shape[1], 1))
         for i in range(X.shape[0]):
             x=X[i,:].reshape(-1,1)

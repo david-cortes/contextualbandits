@@ -1,40 +1,69 @@
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, _check_fit_input, _check_X_input,\
             _check_1d_inp, _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
-            _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression, _LinUCBSingle
+            _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\
+            _check_bools, _LinUCBSingle
 import warnings
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LogisticRegression, SGDClassifier
 import pandas as pd, numpy as np
 
 class BootstrappedUCB:
-    def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80, beta_prior='auto'):
+    """
+    Bootstrapped Upper-Confidence Bound
+
+    Obtains an upper confidence bound by taking the percentile of the predictions from a
+    set of classifiers, all fit with different bootstrapped samples (multiple samples per arm).
+    
+    Note
+    ----
+    When fitting the algorithm to data in batches (online), it's not possible to take an
+    exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
+    grows to infinity, the number of times that an observation appears in a bootstrapped sample is
+    distributed ~ Poisson(1). However, I've found that assigning random weights to observations
+    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(2,2).
+    
+    Parameters
+    ----------
+    base_algorithm : obj
+        Base binary classifier for which each sample for each class will be fit.
+    nchoices : int
+        Number of arms/labels to choose from.
+    nsamples : int
+        Number of bootstrapped samples per class to take.
+    percentile : int [0,100]
+        Percentile of the predictions sample to take
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive sampless from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((4/nchoices,4),2)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    batch_sample_method : str, either 'gamma' or 'poisson'
+        How to simulate bootstrapped samples when training in batch mode (online).
+        See Note.
         """
-        Bootstrapped Upper-Confidence Bound
-        
-        Obtains an upper confidence bound by taking the percentile of the predictions from a
-        set of classifiers, all fit with different bootstrapped samples.
-        
-        Parameters
-        ----------
-        base_algorithm : obj
-            Base binary classifier for which each sample for each class will be fit.
-        nchoices : int
-            Number of arms/labels to choose from.
-        nsamples : int
-            Number of bootstrapped samples per class to take.
-        percentile : int [0,100]
-            Percentile of the predictions sample to take
-        beta_prior : str 'auto', None, or tuple ((a,b), n)
-            If not None, when there are less than 'n' positive sampless from a class
-            (actions from that arm that resulted in a reward), it will predict the score
-            for that class as a random number drawn from a beta distribution with the prior
-            specified by 'a' and 'b'. If set to auto, will be calculated as:
-            beta_prior = ((4/nchoices,4),2)
-        """
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
+                 beta_prior='auto', batch_train=False, smooth_predictions=False,
+                 assume_unique_reward=False, batch_sample_method='gamma'):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         assert isinstance(nsamples, int)
         assert nsamples>=2
         assert isinstance(percentile,int) or isinstance(percentile,float)
         assert (percentile>0) and (percentile<100)
+        assert (batch_sample_method=='gamma') or (batch_sample_method=='poisson')
         
         self.base_algorithm = base_algorithm
         if beta_prior=='auto':
@@ -44,6 +73,13 @@ class BootstrappedUCB:
         self.nchoices = nchoices
         self.nsamples = nsamples
         self.percentile = percentile
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
+        self.batch_sample_method = batch_sample_method
     
     def fit(self, X, a, r):
         """
@@ -69,8 +105,43 @@ class BootstrappedUCB:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.nsamples)
+                                   self.nsamples,
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train,
+                                   self.batch_sample_method)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per sample per class) to partially labeled data in batches,
+        with the actions having been determined by this same policy.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def decision_function(self, X):
         """
@@ -136,6 +207,14 @@ class BootstrappedTS:
     Performs Thompson Sampling by fitting several models per class on bootstrapped samples,
     then makes predictions by taking one of them at random for each class.
     
+    Note
+    ----
+    When fitting the algorithm to data in batches (online), it's not possible to take an
+    exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
+    grows to infinity, the number of times that an observation appears in a bootstrapped sample is
+    distributed ~ Poisson(1). However, I've found that assigning random weights to observations
+    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(2,2).
+    
     Parameters
     ----------
     base_algorithm : obj
@@ -150,21 +229,46 @@ class BootstrappedTS:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    batch_sample_method : str, either 'gamma' or 'poisson'
+        How to simulate bootstrapped samples when training in batch mode (online).
+        See Note.
     
     References
     ----------
     [1] An empirical evaluation of thompson sampling (2011)
     """
-    def __init__(self, base_algorithm, nchoices, nsamples=10,
-                     beta_prior='auto'):
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', batch_train=False,
+                 smooth_predictions=False, assume_unique_reward=False, batch_sample_method='gamma'):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         assert isinstance(nsamples, int)
         assert nsamples>=2
+        assert (batch_sample_method=='gamma') or (batch_sample_method=='poisson')
         
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,2)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         self.nsamples=nsamples
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
+        self.batch_sample_method = batch_sample_method
     
     def fit(self, X, a, r):
         """
@@ -190,8 +294,43 @@ class BootstrappedTS:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.nsamples)
+                                   self.nsamples,
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train,
+                                   self.batch_sample_method)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches,
+        with the actions having been determined by this same policy.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def decision_function(self, X):
         """
@@ -269,12 +408,33 @@ class SeparateClassifiers:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior=None):
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, beta_prior=None, batch_train=False,
+                 smooth_predictions=False, assume_unique_reward=False):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
     
     def fit(self, X, a, r):
         """
@@ -298,8 +458,41 @@ class SeparateClassifiers:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def decision_function(self,X):
         """
@@ -420,14 +613,28 @@ class EpsilonGreedy:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     
     References
     ----------
     [1] The k-armed dueling bandits problem (2010)
     """
-    def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
-                     beta_prior='auto'):
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999, beta_prior='auto',
+                 batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -439,6 +646,12 @@ class EpsilonGreedy:
                 warnings.warn("Warning: 'EpsilonGreedy' has a very high decay rate.")
         self.explore_prob = explore_prob
         self.decay = decay
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
     
     def fit(self, X, a, r):
         """
@@ -462,8 +675,41 @@ class EpsilonGreedy:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def decision_function(self,X):
         """
@@ -533,8 +779,9 @@ class AdaptiveGreedy:
     """
     Adaptive Greedy
     
-    Takes the action with highest estimated reward, unless that estimation
-    falls below a certain moving threshold, in which case it takes a random action.
+    Takes the action with highest estimated reward, unless that estimation falls below a certain
+    threshold, in which case it takes a random action or some other action according to
+    an active learning heuristic.
     
     Note
     ----
@@ -544,7 +791,8 @@ class AdaptiveGreedy:
     In the second case, these are calculated in separate batches rather than in a sliding window.
     
     The original idea was taken from the paper in the references and adapted to the
-    contextual bandits setting like this.
+    contextual bandits setting like this. Can also be set to make choices in the same way as
+    'ActiveExplorer' rather than random (see 'greedy_choice' parameter) when using logistic regression.
     
     Parameters
     ----------
@@ -572,12 +820,30 @@ class AdaptiveGreedy:
         If set to 'auto', will be calculated as initial_thr = 1.5/nchoices
     fixed_thr : bool
         Whether the threshold is to be kept fixed, or updated to a percentile after N predictions.
+    greedy_choice : None or str in {'min', 'max', 'weighted'}
+        How to select arms when predictions are below the threshold. If passing None, selects them at random.
+        If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
+        Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive sampless from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     
     References
     ----------
@@ -585,8 +851,9 @@ class AdaptiveGreedy:
     
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
-                     decay_type='threshold', initial_thr='auto', fixed_thr=False, beta_prior='auto'):
-        _check_constructor_input(base_algorithm,nchoices)
+                     decay_type='percentile', initial_thr='auto', fixed_thr=False, greedy_choice=None,
+                     beta_prior='auto', batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -608,6 +875,24 @@ class AdaptiveGreedy:
         self.decay = decay
         assert (decay_type=='threshold') or (decay_type=='percentile')
         self.decay_type = decay_type
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
+
+        if greedy_choice is not None:
+            assert greedy_choice in ['min', 'max', 'weighted']
+            if type(base_algorithm).__name__=='LogisticRegression':
+                self.reg=base_algorithm.C
+            elif type(base_algorithm).__name__=='RidgeClassifier':
+                self.reg=base_algorithm.alpha
+            elif type(base_algorithm).__name__=='SGDClassifier':
+                self.reg=base_algorithm.alpha
+            else:
+                raise ValueError("'greedy_choice' requires the classifier to be one of 'LogisticRegression', 'SGDClassifier' or 'RidgeClassifier'")
+        self.greedy_choice = greedy_choice
     
     def fit(self, X, a, r):
         """
@@ -631,8 +916,41 @@ class AdaptiveGreedy:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def predict(self, X, exploit=False):
         """
@@ -666,7 +984,8 @@ class AdaptiveGreedy:
             pred_max=pred_proba.max(axis=1)
             pred=np.argmax(pred_proba, axis=1)
             set_random=pred_max<=self.thr
-            pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
+            pred[set_random]=self._choose_greedy(set_random, self.nchoices, X)
+            #pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
         else:
             diff_window=self.window_size-self.window_cnt
             
@@ -676,7 +995,8 @@ class AdaptiveGreedy:
                 pred_max=pred_proba.max(axis=1)
                 pred=np.argmax(pred_proba, axis=1)
                 set_random=pred_max<=self.thr
-                pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
+                pred[set_random]=self._choose_greedy(set_random, self.nchoices, X)
+                #pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
                 self.window_cnt+=X.shape[0]
                 self.window = np.r_[self.window, pred_max]
                 
@@ -694,7 +1014,8 @@ class AdaptiveGreedy:
                 pred_max=pred_proba.max(axis=1)
                 pred=np.argmax(pred_proba, axis=1)
                 set_random=pred_max<=self.thr
-                pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
+                pred[set_random]=self._choose_greedy(set_random, self.nchoices, X)
+                #pred[set_random]=np.random.randint(self.nchoices, size=set_random.sum())
                 
                 pred_all=np.zeros(X.shape[0])
                 pred_all[:n_take_old_thr]=pred
@@ -717,6 +1038,17 @@ class AdaptiveGreedy:
                 return pred_all
                 
         return pred
+
+    def _choose_greedy(self, set_greedy, nchoices, X):
+        if self.greedy_choice is None:
+            return np.random.randint(self.nchoices, size=set_greedy.sum())
+        else:
+            if self.greedy_choice=='min':
+                return ActiveExplorer._get_min_gradient(self, X[set_greedy,:])
+            if self.greedy_choice=='max':
+                return ActiveExplorer._get_max_gradient(self, X[set_greedy,:])
+            if self.greedy_choice=='weighted':
+                return ActiveExplorer._get_weighted_gradient(self, X[set_greedy,:])
     
     def decision_function(self, X):
         """
@@ -764,14 +1096,28 @@ class ExploreFirst:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     
     References
     ----------
     [1] The k-armed dueling bandits problem (2012)
     """
-    def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
-                     beta_prior='auto'):
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, explore_rounds=2500, beta_prior='auto',
+                     batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -780,6 +1126,12 @@ class ExploreFirst:
         assert isinstance(explore_rounds, int)
         self.explore_rounds = explore_rounds
         self.explore_cnt = 0
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
     
     def fit(self, X, a, r):
         """
@@ -803,8 +1155,41 @@ class ExploreFirst:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def predict(self, X, exploit=False):
         """
@@ -894,6 +1279,7 @@ class ActiveExplorer:
     C : float
         Inverse of the regularization parameter for Logistic regression.
         For more details see sklearn.linear_model.LogisticRegression.
+        If None, defaults to 1.0.
     explore_prob : float (0,1)
         Probability of selecting an action according to active learning criteria.
     decay : float (0,1)
@@ -905,18 +1291,40 @@ class ActiveExplorer:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     """
-    def __init__(self, nchoices, C=None, explore_prob=.15, decay=0.9997,
-                     beta_prior='auto'):
+    def __init__(self, nchoices, C=None, explore_prob=.15, decay=0.9997, beta_prior='auto',
+                     batch_train=False, smooth_predictions=False, assume_unique_reward=False):
         
         if C is None:
-            base_algorithm = LogisticRegression(solver='lbfgs')
-            self.reg=1.0
+            if batch_train:
+                base_algorithm = SGDClassifier(alpha = 1/C, loss='log')
+                self.reg=1.0
+            else:
+                base_algorithm = LogisticRegression(solver='lbfgs')
+                self.reg=1.0
         else:
-            base_algorithm = LogisticRegression(C=C, solver='lbfgs')
-            self.reg=C
+            if batch_train:
+                base_algorithm = SGDClassifier(alpha = 1/C, loss='log')
+                self.reg=C
+            else:
+                base_algorithm = LogisticRegression(C=C, solver='lbfgs')
+                self.reg=C
         
-        _check_constructor_input(base_algorithm,nchoices)
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -925,10 +1333,17 @@ class ActiveExplorer:
         assert (explore_prob>0) and (explore_prob<1)
         self.explore_prob = explore_prob
         self.decay = decay
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
     
     def fit(self, X, a, r):
         """
-        Fits the base algorithm (one per class) to partially labeled data with actions chosen by this same policy.
+        Fits logistic regression (one per class) to partially labeled data,
+        with actions chosen by this same policy.
 
         Parameters
         ----------
@@ -947,8 +1362,37 @@ class ActiveExplorer:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits logistic regression (one per class) to partially labeled data in batches,
+        with actions chosen by this same policy.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
             
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
@@ -1080,12 +1524,33 @@ class SoftmaxExplorer:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
+        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    smooth_predictions : bool
+        Whether to smooth the predictions for each arm by predicting as:
+        yhat_smooth = (yhat*n + 1)/(n + 2)
+        where 'n' is the number of times each arm was chosen in the training data
+        (not recommended if passing 'beta_prior').
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior='auto'):
-        _check_constructor_input(base_algorithm,nchoices)
+    def __init__(self, base_algorithm, nchoices, beta_prior='auto', batch_train=False,
+                     smooth_predictions=False, assume_unique_reward=False):
+        _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
+        
+        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
+                                        smooth_predictions,assume_unique_reward)
+        self.batch_train = batch_train
+        self.smooth_predictions = smooth_predictions
+        self.assume_unique_reward = assume_unique_reward
     
     def fit(self, X, a, r):
         """
@@ -1109,8 +1574,41 @@ class SoftmaxExplorer:
         self._oracles=_OneVsRest(self.base_algorithm,
                                    X,a,r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1])
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smooth_predictions,
+                                   self.assume_unique_reward,
+                                   self.batch_train)
         return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            Copy of this same object
+        """
+        if '_oracles' in dir(self):
+            X,a,r=_check_fit_input(X,a,r)
+            self._oracles.partial_fit(X,a,r)
+            return self
+        else:
+            return self.fit(X,a,r)
     
     def decision_function(self, X, output_score=False, apply_sigmoid_score=True):
         """
@@ -1191,7 +1689,7 @@ class LinUCB:
         _check_constructor_input(_ZeroPredictor(),nchoices)
         self.alpha=alpha
         self.nchoices=nchoices
-        self._oracles=[LinUCBSingle(self.alpha) for n in range(nchoices)]
+        self._oracles=[_LinUCBSingle(self.alpha) for n in range(nchoices)]
     
     def fit(self, X, a, r):
         """"
@@ -1215,7 +1713,7 @@ class LinUCB:
         """
         X,a,r=_check_fit_input(X,a,r)
         self.ndim = X.shape[1]
-        for n in range(nchoices):
+        for n in range(self.nchoices):
             this_action=a==n
             self._oracles[n].fit(X[this_action,:],r[this_action].astype('float64'))
 
@@ -1240,8 +1738,7 @@ class LinUCB:
             Copy of this same object
         """
         X,a,r=_check_fit_input(X,a,r)
-        assert X.shape[1]==self.ndim
-        for n in range(nchoices):
+        for n in range(self.nchoices):
             this_action=a==n
             self._oracles[n].partial_fit(X[this_action,:], r[this_action].astype('float64'))
             
@@ -1267,7 +1764,7 @@ class LinUCB:
         X=_check_X_input(X)
         pred=np.zeros((X.shape[0],self.nchoices))
         for choice in range(self.nchoices):
-            pred[:,choice]=self._oracles[choice].predict(X, exploit)
+            pred[:,choice]=self._oracles[choice].predict(X)
         return np.argmax(pred, axis=1)
 
 class BayesianUCB:
