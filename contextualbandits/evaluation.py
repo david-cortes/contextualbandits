@@ -1,5 +1,4 @@
 import pandas as pd, numpy as np
-from sklearn.linear_model import LogisticRegression
 from contextualbandits.utils import _check_fit_input, _check_1d_inp, _check_X_input
 from contextualbandits.online import SeparateClassifiers
 
@@ -204,3 +203,94 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     out[actions_matching] += (r[actions_matching]-rhat_old[actions_matching])/p[actions_matching].reshape(-1)
     
     return np.mean(out)
+
+def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update_freq=50, seed=None):
+    """
+    Evaluates a policy on fully-labeled data
+    
+    Parameters
+    ----------
+    X : array (n_samples, n_features)
+        Covariates for each observation.
+    y_onehot : array (n_samples, n_arms)
+        Labels (zero or one) for each class for each observation.
+    online : bool
+        Whether the algorithm should be fit to batches of data with a 'partial_fit' method,
+        or to all historical data each time.
+    shuffle : bool
+        Whether to shuffle the data (X and y_onehot) before passing through it.
+        Be awarethat data is shuffled in-place.
+    update_freq : int
+        Batch size - how many observations to predict before refitting the model.
+    seed : None or int
+        Random seed to use when shuffling and when selecting actions at random for first batch.
+    
+    Returns
+    -------
+    mean_rew : array (n_samples,)
+        Mean reward obtained at each batch.
+    """
+    if type(X).__name__=='DataFrame':
+        X=X.as_matrix()
+    if type(y_onehot).__name__=='DataFrame':
+        y_onehot=y_onehot.as_matrix()
+    
+    assert type(X).__name__=='ndarray'
+    assert type(y_onehot).__name__=='ndarray'
+    assert isinstance(online, bool)
+    assert isinstance(shuffle, bool)
+    assert isinstance(update_freq, bool)
+    assert X.shape[0]>update_freq
+    assert X.shape[0]==y_onehot.shape[0]
+    assert X.shape[0]>0
+    
+    if shuffle:
+        new_order=np.arange(X.shape[0])
+        if seed is not None:
+            np.random.seed(seed)
+        np.random.shuffle(new_order)
+        X=X[new_order,:]
+        y_onehot=y_onehot[new_order,:]
+        
+    rewards_per_turn = list()
+    history_actions = np.array([])
+    n_choices = y_onehot.shape[1]
+    
+    ## initial seed
+    batch_features = X[:update_freq,:]
+    if seed is not None:
+        np.random.seed(seed)
+    batch_actions = np.random.randint(y_onehot.shape[1], size=update_freq)
+    batch_rewards = y_onehot[np.arange(update_freq), batch_actions]
+    
+    if online:
+        policy.partial_fit(batch_features, batch_actions, batch_rewards)
+    else:
+        policy.fit(batch_features, batch_actions, batch_rewards)
+        
+    ## running the loop
+    for i in range(int(np.floor(features.shape[0]/batch_size))):
+        st=(i+1)*batch_size
+        end=(i+2)*batch_size
+        end=np.min([end, X.shape[0]])
+        
+        batch_features = X[st:end,:]
+        batch_actions = policy.predict(batch_features)
+        batch_rewards = y_onehot[np.arange(st, end), batch_actions]
+        
+        rewards_per_turn.append(rewards_per_turn.sum())
+        
+        if online:
+            policy.partial_fit(batch_features, batch_actions, batch_rewards)
+        else:
+            history_actions = np.append(history_actions, batch_actions)
+            policy.fit(X[:end,:], history_actions, y_onehot[np.arange(end), history_actions])
+            
+    ## outputting results
+    def get_mean_reward(reward_lst, batch_size):
+        mean_rew=list()
+        for r in range(len(reward_lst)):
+            mean_rew.append(sum(reward_lst[:r+1])/((r+1)*batch_size))
+        return mean_rew
+    
+    return np.array(get_mean_reward(rewards_per_turn, update_freq))

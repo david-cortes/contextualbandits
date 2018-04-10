@@ -1,5 +1,46 @@
-import numpy as np
+import numpy as np, types
 from copy import deepcopy
+
+
+def _modify_predict_method(classifier):
+    classifier.predict_old=deepcopy(classifier.predict)
+    classifier.predict=types.MethodType(_robust_predict, classifier)
+
+    if 'predict_proba' in dir(classifier):
+        # TODO: once scikit-learn's issue 10938 is solved, make like the others
+        classifier.predict_proba_new=types.MethodType(_robust_predict_proba, classifier)
+    if 'decision_function' in dir(classifier):
+        classifier.decision_function_old=classifier.decision_function
+        classifier.decision_function=types.MethodType(_robust_decision_function, classifier)
+
+    return classifier
+
+def _robust_predict(self, X):
+    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
+        try:
+            return self.predict_old(X)
+        except:
+            return np.zeros(X.shape[0])
+    else:
+        return np.zeros(X.shape[0])
+
+def _robust_predict_proba(self, X):
+    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
+        try:
+            return self.predict_proba(X)
+        except:
+            return np.zeros((X.shape[0],2))
+    else:
+        return np.zeros((X.shape[0],2))
+
+def _robust_decision_function(self, X):
+    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
+        try:
+            return self.decision_function_old(X)
+        except:
+            return np.zeros(X.shape[0])
+    else:
+        return np.zeros(X.shape[0])
 
 def _check_bools(batch_train=False,smooth_predictions=False,assume_unique_reward=False):
     assert isinstance(batch_train, bool)
@@ -162,49 +203,58 @@ class _RandomPredictor:
 class _ArrBSClassif:
     def __init__(self,base,X,a,r,n,thr,alpha,beta,samples,smooth=False,assume_un=False,
                  partialfit=False,partial_method='gamma'):
+        if partialfit:
+            base=_modify_predict_method(base)
         self.base=base
         self.algos=[[deepcopy(base) for i in range(samples)] for j in range(n)]
         self.n=n
         self.samples=samples
+        self.partialfit=partialfit
         self.partial_method=partial_method
         self.smooth=smooth
-        if smooth:
+        self.assume_un=assume_un
+        if self.smooth:
             self.counters=np.zeros((1,n))
-        for choice in range(n):
-            if assume_un:
-                this_choice=(a==choice)
-                arms_w_rew=(r==1)
-                yclass=r[this_choice|arms_w_rew]
-                yclass[arms_w_rew&(~this_choice)]=0
-                this_choice=this_choice|arms_w_rew
-            else:
-                this_choice=(a==choice)
-                yclass=r[this_choice]
-            if smooth:
-                self.counters[0,n]+=yclass.shape[0]
-            n_pos=yclass.sum()
-            if n_pos<thr:
-                self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
-                continue
-            if (n_pos==0) and (thr<1):
-                self.algos[choice]=_ZeroPredictor()
-                continue
-            xclass=X[this_choice,:]
-            for sample in range(samples):
-                ix_take=np.random.randint(xclass.shape[0], size=xclass.shape[0])
-                xsample=xclass[ix_take,:]
-                ysample=yclass[ix_take]
-                nclass=ysample.sum()
-                if nclass==ysample.shape[0]:
-                    self.algos[choice][sample]=_OnePredictor()
-                elif ysample.sum()>0:
-                    self.algos[choice][sample].fit(xsample,ysample)
+
+        if self.partialfit:
+            self.partial_fit(X,a,r)
+        else:
+            for choice in range(n):
+                if self.assume_un:
+                    this_choice=(a==choice)
+                    arms_w_rew=(r==1)
+                    yclass=r[this_choice|arms_w_rew]
+                    yclass[arms_w_rew&(~this_choice)]=0
+                    this_choice=this_choice|arms_w_rew
                 else:
-                    self.algos[choice][sample]=_ZeroPredictor()
+                    this_choice=(a==choice)
+                    yclass=r[this_choice]
+                if self.smooth:
+                    self.counters[0,choice]+=yclass.shape[0]
+
+                n_pos=yclass.sum()
+                if n_pos<thr:
+                    self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
+                    continue
+                if (n_pos==0) and (thr<1):
+                    self.algos[choice]=_ZeroPredictor()
+                    continue
+                xclass=X[this_choice,:]
+                for sample in range(samples):
+                    ix_take=np.random.randint(xclass.shape[0], size=xclass.shape[0])
+                    xsample=xclass[ix_take,:]
+                    ysample=yclass[ix_take]
+                    nclass=ysample.sum()
+                    if nclass==ysample.shape[0]:
+                        self.algos[choice][sample]=_OnePredictor()
+                    elif ysample.sum()>0:
+                        self.algos[choice][sample].fit(xsample,ysample)
+                    else:
+                        self.algos[choice][sample]=_ZeroPredictor()
                     
     def partial_fit(self,X,a,r):
-        for choice in range(n):
-            if assume_un:
+        for choice in range(self.n):
+            if self.assume_un:
                 this_choice=(a==choice)
                 arms_w_rew=(r==1)
                 yclass=r[this_choice|arms_w_rew]
@@ -214,20 +264,21 @@ class _ArrBSClassif:
                 this_choice=(a==choice)
                 yclass=r[this_choice]
 
-            if smooth:
-                self.counters[0,n]+=yclass.shape[0]
+            if self.smooth:
+                self.counters[0,choice]+=yclass.shape[0]
 
             xclass=X[this_choice,:]
             
-            for sample in range(samples):
-                if self.partial_method=='poisson':
-                    appear_times=np.random.poisson(1, size=xclass.shape[0])
-                    xsample=np.repeat(xclass, appear_times)
-                    ysample=np.repeat(yclass, appear_times)
-                    self.algos[choice][sample].partial_fit(xsample,ysample,classes=[0,1])
-                else:
-                    self.algos[choice][sample].partial_fit(xclass,yclass,
-                            classes=[0,1],sample_weight=np.random.gamma(2,2,size=xclass.shape[0]))
+            if xclass.shape[0]>0:
+                for sample in range(self.samples):
+                    if self.partial_method=='poisson':
+                        appear_times=np.random.poisson(1, size=xclass.shape[0])
+                        xsample=np.repeat(xclass, appear_times)
+                        ysample=np.repeat(yclass, appear_times)
+                        self.algos[choice][sample].partial_fit(xsample,ysample,classes=[0,1])
+                    else:
+                        self.algos[choice][sample].partial_fit(xclass,yclass,
+                                classes=[0,1],sample_weight=np.random.gamma(2,2,size=xclass.shape[0]))
     
     def score_avg(self,X):
         preds=np.zeros((X.shape[0],self.n))
@@ -236,13 +287,15 @@ class _ArrBSClassif:
                 preds[:,choice]=self.algos[choice].decision_function(X)
                 continue
             for sample in range(self.samples):
-                try:
+                if 'predict_proba_new' in dir(self.algos[choice][sample]):
+                    preds[:,choice]+=self.algos[choice][sample].predict_proba_new(X)[:,1]
+                elif 'predict_proba' in dir(self.algos[choice][sample]):
                     preds[:,choice]+=self.algos[choice][sample].predict_proba(X)[:,1]
-                except:
-                    try:
-                        preds[:,choice]+=self.algos[choice][sample].decision_function(X)
-                    except:
-                        preds[:,choice]+=self.algos[choice][sample].predict(X)
+                elif 'decision_function' in dir(self.algos[choice][sample]):
+                    preds[:,choice]+=self.algos[choice][sample].decision_function(X)
+                else:
+                    preds[:,choice]+=self.algos[choice][sample].predict(X)
+                
             preds[:,choice]=preds[:,choice]/self.samples
         
         if self.smooth:
@@ -260,13 +313,15 @@ class _ArrBSClassif:
                 continue
             arr_compare=list()
             for sample in range(self.samples):
-                try:
+                if 'predict_proba_new' in dir(self.algos[choice][sample]):
+                    arr_compare.append(self.algos[choice][sample].predict_proba_new(X)[:,1])
+                elif 'predict_proba' in dir(self.algos[choice][sample]):
                     arr_compare.append(self.algos[choice][sample].predict_proba(X)[:,1])
-                except:
-                    try:
-                        arr_compare.append(self.algos[choice][sample].decision_function(X))
-                    except:
-                        raise Exception("BootstrappedUCB requires a classifier with method 'predict_proba' or 'decision_function'")
+                elif 'decision_function' in dir(self.algos[choice][sample]):
+                    arr_compare.append(self.algos[choice][sample].decision_function(X))
+                else:
+                    raise Exception("BootstrappedUCB requires a classifier with method 'predict_proba' or 'decision_function'")
+                
             if perc==100:
                 preds[:,choice]=np.vstack(arr_compare).max(axis=0)
             else:
@@ -293,18 +348,21 @@ class _ArrBSClassif:
     
 class _OneVsRest:
     def __init__(self,base,X,a,r,n,thr,alpha,beta,smooth=False,assume_un=False,partialfit=False):
-        self.base=base
         self.n=n
+        if partialfit:
+            base=_modify_predict_method(base)
+        self.base=base
         self.algos=[deepcopy(base) for i in range(n)]
         self.smooth=smooth
-        if smooth:
+        self.assume_un=assume_un
+        if self.smooth:
             self.counters=np.zeros((1,n))
             
         if partialfit:
             self.partial_fit(X,a,r)
         else:
             for choice in range(n):
-                if assume_un:
+                if self.assume_un:
                     this_choice=(a==choice)
                     arms_w_rew=(r==1)
                     yclass=r[this_choice|arms_w_rew]
@@ -314,8 +372,8 @@ class _OneVsRest:
                     this_choice=(a==choice)
                     yclass=r[this_choice]
                 n_pos=yclass.sum()
-                if smooth:
-                    self.counters[0,n]+=yclass.shape[0]
+                if self.smooth:
+                    self.counters[0,choice]+=yclass.shape[0]
                 if n_pos<thr:
                     self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
                     continue
@@ -328,8 +386,8 @@ class _OneVsRest:
                 self.algos[choice].fit(xclass,yclass)
                 
     def partial_fit(self,X,a,r):
-        for choice in range(n):
-            if assume_un:
+        for choice in range(self.n):
+            if self.assume_un:
                 this_choice=(a==choice)
                 arms_w_rew=(r==1)
                 yclass=r[this_choice|arms_w_rew]
@@ -339,11 +397,12 @@ class _OneVsRest:
                 this_choice=(a==choice)
                 yclass=r[this_choice]
 
-            if smooth:
-                self.counters[0,n]+=yclass.shape[0]
+            if self.smooth:
+                self.counters[0,choice]+=yclass.shape[0]
 
             xclass=X[this_choice,:]
-            self.algos[choice].partial_fit(xclass,yclass,classes=[0,1])
+            if xclass.shape[0]>0:
+                self.algos[choice].partial_fit(xclass,yclass,classes=[0,1])
             
             
     
@@ -353,7 +412,10 @@ class _OneVsRest:
             try:
                 preds[:,choice]=self.algos[choice].decision_function(X)
             except:
-                preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
+                try:
+                    preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
+                except:
+                    preds[:,choice]=self.algos[choice].predict_proba_new(X)[:,1]
         if self.smooth:
             preds=(preds*self.counters+1)/(self.counters+2)
         return preds
@@ -361,7 +423,9 @@ class _OneVsRest:
     def predict_proba(self,X):
         preds=np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
-            if 'predict_proba' in dir(self.base):
+            if 'predict_proba_new' in dir(self.base):
+                preds[:,choice]=self.algos[choice].predict_proba_new(X)[:,1]
+            elif 'predict_proba' in dir(self.base):
                 preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
             elif 'decision_function' in dir(self.base):
                 preds[:,choice]=self.algos[choice].decision_function(X)
@@ -382,6 +446,9 @@ class _OneVsRest:
     def predict_proba_raw(self,X):
         preds=np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
+            if 'predict_proba_new' in dir(self.algos[choice]):
+                preds[:,choice]=self.algos[choice].predict_proba_new(X)[:,1]
+            else:
                 preds[:,choice]=self.algos[choice].predict_proba(X)[:,1]
                 
         if self.smooth:

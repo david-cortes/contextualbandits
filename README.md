@@ -27,8 +27,7 @@ The problem is very similar to multi-class or multi-label classification (with t
 
 Examples of such scenarios include online advertising, where we only know whether a user clicked an ad that he was presented with, but don't know which other ads he would have clicked; or clinic trials where we know how a person responded to a treatment, but don't know how he would have responded to a different treatment.
 
-While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, **this package deals only with the case of discrete rewards `{0,1}`**, and only with the case of arms that all share the same features.
- 
+While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, **this package deals only with the case of discrete rewards `{0,1}`**, and only with the case of arms that all see the same covariates.
 
 Three of the main problematics that arise in contextual bandits are:
 
@@ -45,7 +44,7 @@ Other interesting topics in contextual bandits not covered here include:
 
 For more information, see the user guides below.
 
-Most of the algorithms here are meta-heuristics that take a binary classifier as a base, such as Logistic Regression.
+Most of the algorithms here are meta-heuristics that take a binary classifier (such as Logistic Regression or XGBoost) as a black-box oracle.
 
 
 ## Getting started
@@ -94,8 +93,7 @@ Evaluation:
 
 Some of the policies here such as `AdaptiveGreedy` haven't been yet evaluated or analyzed in any research papers for the scenario of contextual bandits though, and there might be better ways to convert the corresponding multi-armed bandits strategies to contextual bandits strategies than how it was done here.
 
-Note that the algorithms are meant for an "online" scenario in the sense of needing to make decisions in real time and receive feedback shortly afterwards, but most of them still require to be refit to all historical data every time rather than being "online" in the sense of being fit to batches of data as they come. Implementations of truly online algorithms (other than LinUCB) to follow in the future.
-
+Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details).
 
 ![image](plots/bibtex_results.png "bibtex_simulation")
 

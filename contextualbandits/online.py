@@ -1,9 +1,8 @@
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, _check_fit_input, _check_X_input,\
             _check_1d_inp, _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
             _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\
-            _check_bools, _LinUCBSingle
+            _check_bools, _LinUCBSingle, _modify_predict_method
 import warnings
-from sklearn.linear_model import LogisticRegression, SGDClassifier
 import pandas as pd, numpy as np
 
 class BootstrappedUCB:
@@ -1305,27 +1304,32 @@ class ActiveExplorer:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_seed : None or int
+        Random state or seed to pass to the solver.
     """
     def __init__(self, nchoices, C=None, explore_prob=.15, decay=0.9997, beta_prior='auto',
-                     batch_train=False, smooth_predictions=False, assume_unique_reward=False):
-        
+                     batch_train=False, smooth_predictions=False, assume_unique_reward=False, random_seed=None):
+        from sklearn.linear_model import LogisticRegression, SGDClassifier
         if C is None:
             if batch_train:
-                base_algorithm = SGDClassifier(alpha = 1/C, loss='log')
+                base_algorithm = SGDClassifier(loss='log', random_state=random_seed)
                 self.reg=1.0
             else:
-                base_algorithm = LogisticRegression(solver='lbfgs')
+                base_algorithm = LogisticRegression(solver='lbfgs', random_state=random_seed)
                 self.reg=1.0
         else:
             if batch_train:
-                base_algorithm = SGDClassifier(alpha = 1/C, loss='log')
+                base_algorithm = SGDClassifier(alpha = 1/C, loss='log', random_state=random_seed)
                 self.reg=C
             else:
-                base_algorithm = LogisticRegression(C=C, solver='lbfgs')
+                base_algorithm = LogisticRegression(C=C, solver='lbfgs', random_state=random_seed)
                 self.reg=C
         
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+
+        if batch_train:
+            base_algorithm = _modify_predict_method(base_algorithm)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
@@ -1444,7 +1448,10 @@ class ActiveExplorer:
             return np.array([])
         gradmax=np.zeros((X.shape[0],self.nchoices))
         for choice in range(self.nchoices):
-            curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            try:
+                curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            except:
+                curr_pred=np.repeat(0.5, X.shape[0])
             try:
                 curr_coef=self._oracles.algos[choice].coef_
                 curr_int=self._oracles.algos[choice].intercept_
@@ -1464,7 +1471,10 @@ class ActiveExplorer:
             return np.array([])
         gradmin=np.zeros((X.shape[0],self.nchoices))
         for choice in range(self.nchoices):
-            curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            try:
+                curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            except:
+                curr_pred=np.repeat(0.5, X.shape[0])
             try:
                 curr_coef=self._oracles.algos[choice].coef_
                 curr_int=self._oracles.algos[choice].intercept_
@@ -1484,7 +1494,10 @@ class ActiveExplorer:
             return np.array([])
         gradweighted=np.zeros((X.shape[0],self.nchoices))
         for choice in range(self.nchoices):
-            curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            try:
+                curr_pred=self._oracles.algos[choice].predict_proba(X)[:,1]
+            except:
+                curr_pred=np.repeat(0.5, X.shape[0])
             try:
                 curr_coef=self._oracles.algos[choice].coef_
                 curr_int=self._oracles.algos[choice].intercept_
@@ -1655,6 +1668,8 @@ class SoftmaxExplorer:
         pred=self.decision_function(X)
         chosen=list()
         for p_arr in pred:
+            if np.sum(p_arr)!=1.0:
+                p_arr=p_arr/np.sum(p_arr)
             chosen.append(np.random.choice(self.nchoices, p=p_arr))
         if not output_score:
             return np.array(chosen)
