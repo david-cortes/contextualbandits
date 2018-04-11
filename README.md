@@ -1,7 +1,7 @@
 # Contextual Bandits
 
 
-This Python package contains implementations of methods from different papers dealing with the contextual bandits problem, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
+This Python package contains implementations of methods from different papers dealing with the contextual bandit problem, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
 
 ## Instalation
@@ -17,11 +17,11 @@ Contextual bandits, also known as multi-armed bandits with covariates or associa
 
 The problem comes from an iterative process generating data as follows:
 
-* At each round, the world creates an observation consisting of a set of covariates `X` of fixed dimension and a vector of rewards `r` (which are stochastic but dependent on the covariates) of length corresponding to `m`, the number of arms.
-* An agent must choose an arm or label for the observation among the set of `m` arms.
+* At each round, the world creates an observation consisting of a set of covariates (features) of fixed dimension, and a reward (which is stochastic but dependent on the covariates) for each arm/choice/label.
+* An agent must choose an arm or label for the observation.
 * The world reveals the reward for the arm chosen by the agent, but not for the other arms.
 
-The aim is of course to build a policy that would maximize the rewards obtained by the agent. The arms might also expire over time and new arms might appear too, leading to the same exploration-exploitation dilemma faced in multi-armed bandits.
+The aim is to create a policy that would maximize the rewards obtained by the agent. The arms might also expire over time and new arms might appear too, leading to the same exploration-exploitation dilemma faced in multi-armed bandits.
 
 The problem is very similar to multi-class or multi-label classification (with the reward being whether the right label was chosen or not), but with the big difference that the right label or set of labels is not known for each observation, only whether the label that was chosen by the agent for each observation was correct or not.
 
@@ -35,7 +35,7 @@ Three of the main problematics that arise in contextual bandits are:
 * Building a policy/algorithm with data collected from a different policy, covered in `contextualbandits.offpolicy`.
 * Evaluating the performance of different strategies/policies/algorithms based on partially-labeled data, covered in `contextualbandits.evaluation`.
 
-Other interesting topics in contextual bandits not covered here include:
+This package does not deal with other related topics such as:
 
 * Incorporating social networks and similarity information between observations and/or arms – for some implementations of methods dealing with similarity information see [BanditLib](https://github.com/huazhengwang/BanditLib)
 * Bandits with “expert advise” (e.g. Exp4, OnlineCover)
