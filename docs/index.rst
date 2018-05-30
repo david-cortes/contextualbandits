@@ -9,7 +9,7 @@ Contextual Bandits
 This is the documentation page for the python package *contextualbandits*. For 
 more details, see the project's home page:
 
-`<https://www.github.comdavid-cortes/contextualbandits/>`_
+`<https://www.github.com/david-cortes/contextualbandits/>`_
 
 Installation
 =================================
