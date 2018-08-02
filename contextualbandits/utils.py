@@ -82,7 +82,7 @@ def _check_fit_input(X,a,r):
 
 def _check_X_input(X):
     if type(X).__name__=='DataFrame':
-        X=X.as_matrix()
+        X=X.values
     if type(X)==np.matrixlib.defmatrix.matrix:
         X=np.array(X)
     if type(X)!=np.ndarray:
@@ -94,7 +94,7 @@ def _check_X_input(X):
 
 def _check_1d_inp(y):
     if type(y).__name__=='DataFrame' or type(y).__name__=='Series':
-        y=y.as_matrix()
+        y=y.values
     if type(y)==np.matrixlib.defmatrix.matrix:
         y=np.array(y)
     if type(y)!=np.ndarray:
@@ -479,7 +479,7 @@ class _BayesianLogisticRegression:
             coefs=[i for i in trace]
         coefs=pd.DataFrame.from_dict(coefs)
         coefs=coefs[['Intercept']+['x'+str(i) for i in range(X.shape[1])]]
-        coefs=coefs.as_matrix()
+        coefs=coefs.values
         coefs=coefs.T
         
     def predict_all(self,X):
