@@ -1810,7 +1810,7 @@ class BayesianUCB:
     """
     def __init__(self, nchoices, percentile=80, method='advi', nsamples=None, beta_prior=((3,1),3)):
         import pymc3 as pm
-        _check_constructor_input(_BetaPredictor(1,1),nchoices,((1,1),2))
+        _check_constructor_input(_BetaPredictor(1,1),nchoices,False)
         self.beta_prior = beta_prior
         self.nchoices = nchoices
         assert method in ['advi','nuts']
@@ -1911,7 +1911,7 @@ class BayesianTS:
     [1] An empirical evaluation of thompson sampling (2011)
     """
     def __init__(self, nchoices, method='advi', beta_prior=((1,1),3)):
-        _check_constructor_input(_BetaPredictor(1,1),nchoices,((1,1),2))
+        _check_constructor_input(_BetaPredictor(1,1),False)
         self.beta_prior = beta_prior
         self.nchoices = nchoices
         assert method in ['advi','nuts']
