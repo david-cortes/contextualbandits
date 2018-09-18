@@ -271,10 +271,10 @@ class _ArrBSClassif:
             
             if xclass.shape[0]>0:
                 for sample in range(self.samples):
-                    if self.partial_method=='poisson':
-                        appear_times=np.random.poisson(1, size=xclass.shape[0])
-                        xsample=np.repeat(xclass, appear_times)
-                        ysample=np.repeat(yclass, appear_times)
+                    if self.partial_method == 'poisson':
+                        appear_times = np.repeat(np.arange(xclass.shape[0]), np.random.poisson(1, size=xclass.shape[0]))
+                        xsample = xclass[appear_times]
+                        ysample = yclass[appear_times]
                         self.algos[choice][sample].partial_fit(xsample,ysample,classes=[0,1])
                     else:
                         self.algos[choice][sample].partial_fit(xclass,yclass,
