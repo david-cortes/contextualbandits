@@ -1,5 +1,6 @@
-from contextualbandits.utils import _check_constructor_input, _check_beta_prior, _check_fit_input, _check_X_input,\
-            _check_1d_inp, _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
+from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
+            _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
+            _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
             _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\
             _check_bools, _LinUCBSingle, _modify_predict_method
 import warnings
@@ -7,7 +8,7 @@ import pandas as pd, numpy as np
 
 class BootstrappedUCB:
     """
-    Bootstrapped Upper-Confidence Bound
+    Bootstrapped Upper Confidence Bound
 
     Obtains an upper confidence bound by taking the percentile of the predictions from a
     set of classifiers, all fit with different bootstrapped samples (multiple samples per arm).
@@ -18,7 +19,7 @@ class BootstrappedUCB:
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
     distributed ~ Poisson(1). However, I've found that assigning random weights to observations
-    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(2,2).
+    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(1,1).
     
     Parameters
     ----------
@@ -31,12 +32,17 @@ class BootstrappedUCB:
     percentile : int [0,100]
         Percentile of the predictions sample to take
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((4/nchoices,4),2)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        beta_prior = ((5/nchoices,4),2)
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -55,7 +61,7 @@ class BootstrappedUCB:
         See Note.
         """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
-                 beta_prior='auto', batch_train=False, smooth_predictions=False,
+                 beta_prior='auto', smoothing=None, batch_train=False,
                  assume_unique_reward=False, batch_sample_method='gamma'):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         assert isinstance(nsamples, int)
@@ -66,18 +72,15 @@ class BootstrappedUCB:
         
         self.base_algorithm = base_algorithm
         if beta_prior=='auto':
-            self.beta_prior = ((4/nchoices,4),2)
+            self.beta_prior = ((5/nchoices,4),2)
         else:
             self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
+        self.smoothing = _check_smoothing(smoothing)
         self.nchoices = nchoices
         self.nsamples = nsamples
         self.percentile = percentile
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self.batch_sample_method = batch_sample_method
     
     def fit(self, X, a, r):
@@ -105,7 +108,7 @@ class BootstrappedUCB:
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
                                    self.nsamples,
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    self.batch_sample_method)
@@ -212,7 +215,7 @@ class BootstrappedTS:
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
     distributed ~ Poisson(1). However, I've found that assigning random weights to observations
-    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(2,2).
+    produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(1,1).
     
     Parameters
     ----------
@@ -223,21 +226,21 @@ class BootstrappedTS:
     nsamples : int
         Number of bootstrapped samples per class to take.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -250,23 +253,20 @@ class BootstrappedTS:
     ----------
     [1] An empirical evaluation of thompson sampling (2011)
     """
-    def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', batch_train=False,
-                 smooth_predictions=False, assume_unique_reward=False, batch_sample_method='gamma'):
+    def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
+                 batch_train=False, assume_unique_reward=False, batch_sample_method='gamma'):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         assert isinstance(nsamples, int)
         assert nsamples>=2
         assert (batch_sample_method=='gamma') or (batch_sample_method=='poisson')
         
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,2)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         self.nsamples=nsamples
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self.batch_sample_method = batch_sample_method
     
     def fit(self, X, a, r):
@@ -294,7 +294,7 @@ class BootstrappedTS:
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
                                    self.nsamples,
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    self.batch_sample_method)
@@ -402,38 +402,35 @@ class SeparateClassifiers:
     nchoices : int
         Number of arms/labels to choose from.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior=None, batch_train=False,
-                 smooth_predictions=False, assume_unique_reward=False):
+    def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
+                 batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -458,7 +455,7 @@ class SeparateClassifiers:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -607,21 +604,21 @@ class EpsilonGreedy:
         After each prediction, the explore probability reduces to
         p = p*decay
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -631,10 +628,11 @@ class EpsilonGreedy:
     ----------
     [1] The k-armed dueling bandits problem (2010)
     """
-    def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999, beta_prior='auto',
-                 batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+    def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
+                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
@@ -646,11 +644,7 @@ class EpsilonGreedy:
         self.explore_prob = explore_prob
         self.decay = decay
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -675,7 +669,7 @@ class EpsilonGreedy:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -824,21 +818,21 @@ class AdaptiveGreedy:
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
         Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -851,9 +845,10 @@ class AdaptiveGreedy:
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
                      decay_type='percentile', initial_thr='auto', fixed_thr=False, greedy_choice=None,
-                     beta_prior='auto', batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+                     beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
@@ -875,11 +870,7 @@ class AdaptiveGreedy:
         assert (decay_type=='threshold') or (decay_type=='percentile')
         self.decay_type = decay_type
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
 
         if greedy_choice is not None:
             assert greedy_choice in ['min', 'max', 'weighted']
@@ -916,7 +907,7 @@ class AdaptiveGreedy:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -1090,21 +1081,21 @@ class ExploreFirst:
         Number of rounds to wait before exploitation mode.
         Will switch after making N predictions.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1114,10 +1105,11 @@ class ExploreFirst:
     ----------
     [1] The k-armed dueling bandits problem (2012)
     """
-    def __init__(self, base_algorithm, nchoices, explore_rounds=2500, beta_prior='auto',
-                     batch_train=False, smooth_predictions=False, assume_unique_reward=False):
+    def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
+                 beta_prior='auto',smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
@@ -1126,11 +1118,7 @@ class ExploreFirst:
         self.explore_rounds = explore_rounds
         self.explore_cnt = 0
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -1155,7 +1143,7 @@ class ExploreFirst:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -1285,21 +1273,21 @@ class ActiveExplorer:
         After each prediction, the probability of selecting an arm according to active
         learning criteria is set to p = p*decay
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1307,8 +1295,8 @@ class ActiveExplorer:
     random_seed : None or int
         Random state or seed to pass to the solver.
     """
-    def __init__(self, nchoices, C=None, explore_prob=.15, decay=0.9997, beta_prior='auto',
-                     batch_train=False, smooth_predictions=False, assume_unique_reward=False, random_seed=None):
+    def __init__(self, nchoices, C=None, explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
+                 batch_train=False, assume_unique_reward=False, random_seed=None):
         from sklearn.linear_model import LogisticRegression, SGDClassifier
         if C is None:
             if batch_train:
@@ -1327,6 +1315,7 @@ class ActiveExplorer:
         
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
 
         if batch_train:
             base_algorithm = _modify_predict_method(base_algorithm)
@@ -1338,11 +1327,7 @@ class ActiveExplorer:
         self.explore_prob = explore_prob
         self.decay = decay
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -1367,7 +1352,7 @@ class ActiveExplorer:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -1524,6 +1509,7 @@ class SoftmaxExplorer:
     ----
     If the base algorithm has 'predict_proba', but no 'decision_function', it will
     calculate the 'probabilities' with a simple scaling by sum rather than by a softmax.
+    This will not work with models such as Support Vector Machines.
     
     Parameters
     ----------
@@ -1532,38 +1518,35 @@ class SoftmaxExplorer:
     nchoices : int
         Number of arms/labels to choose from.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices,4), 1)
-        Not supported when using 'partial_fit' methods (see alternative 'smooth_predictions').
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Not supported when using 'partial_fit' methods (see alternative 'smoothing' below).
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior='auto', batch_train=False,
-                     smooth_predictions=False, assume_unique_reward=False):
+    def __init__(self, base_algorithm, nchoices, beta_prior='auto', smoothing=None,
+                 batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior,nchoices,1)
+        self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
         
-        batch_train,smooth_predictions,assume_unique_reward=_check_bools(batch_train,
-                                        smooth_predictions,assume_unique_reward)
-        self.batch_train = batch_train
-        self.smooth_predictions = smooth_predictions
-        self.assume_unique_reward = assume_unique_reward
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -1588,7 +1571,7 @@ class SoftmaxExplorer:
                                    X,a,r,
                                    self.nchoices,
                                    self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smooth_predictions,
+                                   self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train)
         return self
@@ -1694,7 +1677,7 @@ class LinUCB:
     nchoices : int
         Number of arms/labels to choose from.
     alpha : float
-        Parameter to control the upper-confidence bound (more is higher).
+        Parameter to control the upper confidence bound (more is higher).
     
     References
     ----------
@@ -1784,15 +1767,15 @@ class LinUCB:
 
 class BayesianUCB:
     """
-    Bayesian Upper-Confidence Bound
+    Bayesian Upper Confidence Bound
     
-    Gets an upper-confidence bound by Bayesian Logistic Regression estimates.
+    Gets an upper confidence bound by Bayesian Logistic Regression estimates.
     
     Note
     ----
     The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
-    You might want to try building a different one yourself from PyMC3 or Edward.
-    The method as implemented here is not scalable to high-dimensional or big datasets.
+    This is a very, very slow implementation, and will probably take at least one
+    order or magnitude more to fit compared to other methods.
     
     Parameters
     ----------
@@ -1802,16 +1785,25 @@ class BayesianUCB:
         Percentile of the predictions sample to take
     method : str, either 'advi' or 'nuts'
         Method used to sample coefficients (see PyMC3's documentation for mode details).
-    beta_prior : None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+     beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'.
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((5/nchoices,4),2)
     """
-    def __init__(self, nchoices, percentile=80, method='advi', nsamples=None, beta_prior=((3,1),3)):
+    def __init__(self, nchoices, percentile=80, method='advi', nsamples=None, beta_prior='auto'):
+
+        ## NOTE: this is a really slow and poorly thought implementation
+        ## TODO: rewrite using some faster framework such as Edward,
+        ##       or with a hard-coded coordinate ascent procedure instead. 
+
         import pymc3 as pm
         _check_constructor_input(_BetaPredictor(1,1),nchoices,False)
-        self.beta_prior = beta_prior
+        if beta_prior=='auto':
+            self.beta_prior = ((5/nchoices,4),2)
+        else:
+            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.nchoices = nchoices
         assert method in ['advi','nuts']
         self.method=method
@@ -1888,11 +1880,12 @@ class BayesianTS:
     
     Performs Thompson Sampling by sampling a set of Logistic Regression coefficients
     from each class, then predicting the class with highest estimate.
+
     Note
     ----
     The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
-    You might want to try building a different one yourself from PyMC3 or Edward.
-    The method as implemented here is not scalable to high-dimensional or big datasets.
+    This is a very, very slow implementation, and will probably take at least one
+    order or magnitude more to fit compared to other methods.
     
     Parameters
     ----------
@@ -1900,19 +1893,25 @@ class BayesianTS:
         Number of arms/labels to choose from.
     method : str, either 'advi' or 'nuts'
         Method used to sample coefficients (see PyMC3's documentation for mode details).
-    beta_prior : None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive sampless from a class
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'.
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((3/nchoices,4), 1)
         
     References
     ----------
     [1] An empirical evaluation of thompson sampling (2011)
     """
     def __init__(self, nchoices, method='advi', beta_prior=((1,1),3)):
+
+        ## NOTE: this is a really slow and poorly thought implementation
+        ## TODO: rewrite using some faster framework such as Edward,
+        ##       or with a hard-coded coordinate ascent procedure instead. 
+
         _check_constructor_input(_BetaPredictor(1,1),False)
-        self.beta_prior = beta_prior
+        self.beta_prior = _check_beta_prior(beta_prior,nchoices,2)
         self.nchoices = nchoices
         assert method in ['advi','nuts']
         self.method=method

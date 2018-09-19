@@ -3,6 +3,8 @@
 
 This Python package contains implementations of methods from different papers dealing with the contextual bandit problem, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
+Paper about it coming soon.
+
 
 ## Instalation
 
