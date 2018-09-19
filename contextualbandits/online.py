@@ -1,4 +1,4 @@
-from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
+from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
             _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
             _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\

@@ -2,7 +2,7 @@ import numpy as np, types
 from copy import deepcopy
 
 def _convert_decision_function(classifier):
-    if 'decision_function' in dir(classifier)
+    if 'decision_function' in dir(classifier):
         classifier.decision_function_original123 = deepcopy(classifier.decision_function)
         classifier.decision_function = types.MethodType(_converted_decision_function, classifier)
     return classifier
@@ -53,7 +53,7 @@ def _converted_decision_function(self, X):
     return pred
 
 def _check_bools(batch_train=False, assume_unique_reward=False):
-    return bool(batch_train) bool(assume_unique_reward)
+    return bool(batch_train), bool(assume_unique_reward)
 
 def _check_constructor_input(base_algorithm,nchoices,batch_train=False):
     assert nchoices>2
