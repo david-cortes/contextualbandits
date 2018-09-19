@@ -47,11 +47,6 @@ class BootstrappedUCB:
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
-    smooth_predictions : bool
-        Whether to smooth the predictions for each arm by predicting as:
-        yhat_smooth = (yhat*n + 1)/(n + 2)
-        where 'n' is the number of times each arm was chosen in the training data
-        (not recommended if passing 'beta_prior').
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
