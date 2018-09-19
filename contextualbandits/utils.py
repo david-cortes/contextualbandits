@@ -347,7 +347,7 @@ class _ArrBSClassif:
 
             ## case when no model has been fit, uses dummy predictors from module
             if not (type(self.algos[choice]) == list):
-                preds[:, choice] = self.algos[choice].predict_proba(X)
+                preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
 
             ## case when there are fitted models
@@ -373,7 +373,7 @@ class _ArrBSClassif:
         for choice in range(self.n):
             ## case when no model has been fit, uses dummy predictors from module
             if not (type(self.algos[choice]) == list):
-                preds[:, choice] = self.algos[choice].predict_proba(X)
+                preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
 
             ## case when there are fitted models
@@ -401,15 +401,15 @@ class _ArrBSClassif:
         for choice in range(self.n):
             ## case when no model has been fit, uses dummy predictors from module
             if not (type(self.algos[choice]) == list):
-                preds[:, choice] = self.algos[choice].predict_proba(X)
+                preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
             ## case when there are fitted models
             sample_take = np.random.randint(self.samples)
-            if 'predict_proba_new' in dir(self.algos[choice][sample]):
-                preds[:, choice] = self.algos[choice][sample_take].predict_proba_new(X)
-            elif 'predict_proba' in dir(self.algos[choice][sample]):
-                preds[:, choice] = self.algos[choice][sample_take].predict_proba(X)
-            elif 'decision_function' in dir(self.algos[choice][sample]):
+            if 'predict_proba_new' in dir(self.algos[choice][sample_take]):
+                preds[:, choice] = self.algos[choice][sample_take].predict_proba_new(X)[:, 1]
+            elif 'predict_proba' in dir(self.algos[choice][sample_take]):
+                preds[:, choice] = self.algos[choice][sample_take].predict_proba(X)[:, 1]
+            elif 'decision_function' in dir(self.algos[choice][sample_take]):
                 preds[:, choice] = self.algos[choice][sample_take].decision_function(X)
             else:
                 preds[:, choice] = self.algos[choice][sample_take].predict(X)
