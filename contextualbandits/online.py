@@ -25,6 +25,12 @@ class BootstrappedUCB:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     nsamples : int
@@ -157,7 +163,7 @@ class BootstrappedUCB:
         X=_check_X_input(X)
         return self._oracles.score_max(X,perc=self.percentile)
     
-    def predict(self, X, exploit=False, output_score=False, apply_sigmoid_scores=True):
+    def predict(self, X, exploit=False, output_score=False):
         """
         Selects actions according to this policy for new data.
         
@@ -170,10 +176,7 @@ class BootstrappedUCB:
             arm with the highest expected reward according to current models.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
-        apply_sigmoid_scores : bool
-            If passing output_score=True, whether to apply a sigmoid function to the scores
-            from the decision function of the classifier that predicts each class.
+            it with this package's offpolicy and evaluation modules.
             
         Returns
         -------
@@ -183,18 +186,16 @@ class BootstrappedUCB:
             that the classifier gave to that class.
         """
         if exploit:
-            X=_check_X_input(X)
-            pred=self._oracles.score_avg(X)
+            X = _check_X_input(X)
+            pred = self._oracles.score_avg(X)
         else:
-            pred=self.decision_function(X)
+            pred = self.decision_function(X)
             
         if not output_score:
             return np.argmax(pred, axis=1).reshape(-1)
         else:
-            score_max=pred.max(axis=1).reshape(-1,1)
-            if apply_sigmoid:
-                score_max=1/(1+np.exp(-score_max))
-            pred=np.argmax(pred, axis=1).reshape(-1,1)
+            score_max = pred.max(axis=1).reshape(-1,1)
+            pred = np.argmax(pred, axis=1).reshape(-1,1)
             return np.c_[pred, score_max]
 
 class BootstrappedTS:
@@ -216,6 +217,12 @@ class BootstrappedTS:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     nsamples : int
@@ -343,7 +350,7 @@ class BootstrappedTS:
         X=_check_X_input(X)
         return self._oracles.score_rnd(X)
     
-    def predict(self, X, exploit=False, output_score=False, apply_sigmoid_scores=True):
+    def predict(self, X, exploit=False, output_score=False):
         """
         Selects actions according to this policy for new data.
         
@@ -357,9 +364,6 @@ class BootstrappedTS:
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.
-        apply_sigmoid_scores : bool
-            If passing output_score=True, whether to apply a sigmoid function to the scores
-            from the decision function of the classifier that predicts each class.
             
         Returns
         -------
@@ -369,18 +373,16 @@ class BootstrappedTS:
             that the classifier gave to that class.
         """
         if exploit:
-            X=_check_X_input(X)
-            pred=self._oracles.score_avg(X)
+            X = _check_X_input(X)
+            pred = self._oracles.score_avg(X)
         else:
-            pred=self.decision_function(X)
+            pred = self.decision_function(X)
         
         if not output_score:
             return np.argmax(pred, axis=1).reshape(-1)
         else:
-            score_max=pred.max(axis=1).reshape(-1,1)
-            if apply_sigmoid:
-                score_max=1/(1+np.exp(-score_max))
-            pred=np.argmax(pred, axis=1).reshape(-1,1)
+            score_max = pred.max(axis=1).reshape(-1,1)
+            pred = np.argmax(pred, axis=1).reshape(-1,1)
             return np.c_[pred, score_max]
 
 class SeparateClassifiers:
@@ -394,6 +396,12 @@ class SeparateClassifiers:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
@@ -545,7 +553,7 @@ class SeparateClassifiers:
         X=_check_X_input(X)
         return self._oracles.predict_proba_raw(X)
     
-    def predict(self, X, exploit=False, output_score=False, apply_sigmoid_scores=True):
+    def predict(self, X, exploit=False, output_score=False):
         """
         Selects actions according to this policy for new data.
         
@@ -559,9 +567,6 @@ class SeparateClassifiers:
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.
-        apply_sigmoid_scores : bool
-            If passing output_score=True, whether to apply a sigmoid function to the scores
-            from the decision function of the classifier that predicts each class.
             
         Returns
         -------
@@ -570,15 +575,13 @@ class SeparateClassifiers:
             with the first column indicating the action and the second one indicating the score
             that the classifier gave to that class.
         """
-        scores=self.decision_function(X)
-        pred=np.argmax(scores, axis=1)
+        scores = self.decision_function(X)
+        pred = np.argmax(scores, axis=1)
         if not output_score:
             return pred
         else:
-            score_max=np.max(scores, axis=1).reshape(-1,1)
-            if apply_sigmoid_scores:
-                score_max=1/(1+np.exp(-score_max))
-            return np.c_[pred.reshape(-1,1),score_max]
+            score_max = np.max(scores, axis=1).reshape(-1,1)
+            return np.c_[pred.reshape(-1,1), score_max]
 
 class EpsilonGreedy:
     """
@@ -591,6 +594,12 @@ class EpsilonGreedy:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     explore_prob : float (0,1)
@@ -721,7 +730,7 @@ class EpsilonGreedy:
         X=_check_X_input(X)
         return self._oracles.decision_function(X)
     
-    def predict(self, X, exploit=False, output_score=False, apply_sigmoid_scores=True):
+    def predict(self, X, exploit=False, output_score=False):
         """
         Selects actions according to this policy for new data.
         
@@ -735,9 +744,6 @@ class EpsilonGreedy:
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.
-        apply_sigmoid_scores : bool
-            If passing output_score=True, whether to apply a sigmoid function to the scores
-            from the decision function of the classifier that predicts each class.
             
         Returns
         -------
@@ -746,21 +752,19 @@ class EpsilonGreedy:
             with the first column indicating the action and the second one indicating the score
             that the classifier gave to that class.
         """
-        scores=self.decision_function(X)
-        pred=np.argmax(scores, axis=1)
+        scores = self.decision_function(X)
+        pred = np.argmax(scores, axis=1)
         if not exploit:
-            ix_change_rnd=(np.random.random(size=X.shape[0])<=self.explore_prob)
+            ix_change_rnd = (np.random.random(size =  X.shape[0]) <= self.explore_prob)
             pred[ix_change_rnd] = np.random.randint(self.nchoices, size=ix_change_rnd.sum())
         if self.decay is not None:
-            self.explore_prob*=self.decay**X.shape[0]
+            self.explore_prob *= self.decay**X.shape[0]
         if not output_score:
             return pred
         else:
-            score_max=np.max(scores, axis=1).reshape(-1,1)
-            if apply_sigmoid_scores:
-                score_max=1/(1+np.exp(-score_max))
-            score_max[ix_change_rnd]=1/self.nchoices
-            return np.c_[pred.reshape(-1,1),score_max]
+            score_max = np.max(scores, axis=1).reshape(-1,1)
+            score_max[ix_change_rnd] = 1 / self.nchoices
+            return np.c_[pred.reshape(-1,1), score_max]
 
 
 class AdaptiveGreedy:
@@ -786,6 +790,12 @@ class AdaptiveGreedy:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     window_size : int
@@ -1070,6 +1080,12 @@ class ExploreFirst:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+               This will not work out-of-the-box with SVM and related, in which case you'll need to define a 'predict_proba'
+               method that would recalibrate the predictions (you'll also need to add the calibration model inside it)
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     nchoices : int
         Number of arms/labels to choose from.
     explore_rounds : int
@@ -1095,10 +1111,6 @@ class ExploreFirst:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    
-    References
-    ----------
-    [1] The k-armed dueling bandits problem (2012)
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
                  beta_prior='auto',smoothing=None, batch_train=False, assume_unique_reward=False):
@@ -1495,7 +1507,7 @@ class ActiveExplorer:
 
 class SoftmaxExplorer:
     """
-    Soft-Max Explorer
+    SoftMax Explorer
     
     Selects an action according to probabilites determined by a softmax transformation
     on the scores from the decision function that predicts each class.
@@ -1510,6 +1522,11 @@ class SoftmaxExplorer:
     ----------
     base_algorithm : obj
         Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1, to which it
+               will apply an inverse sigmoid function.
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+            3) A 'predict' method outputting (n_samples,), values in [0,1], to which it will apply an inverse sigmoid function.
     nchoices : int
         Number of arms/labels to choose from.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
