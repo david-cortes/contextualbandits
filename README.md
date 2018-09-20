@@ -79,7 +79,7 @@ Adaptations from multi-armed bandits strategies:
 * Thompson Sampling (see [2] and [3])
 * Epsilon Greedy (see [6] and [5])
 * Adaptive Greedy (see [4])
-* Explore-Then-Exploit (see [6]) 
+* Explore-Then-Exploit
 
 Other:
 * Exploration based on active learning 
@@ -103,6 +103,10 @@ Most of the methods here can work with streaming data by fitting them to the dat
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
 
+This package assumes that the binary classification algorithms used have probabilistic outputs, ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation. Under some of the online algorithms or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [11]).
+
+Be aware that this is a research-oriented package and it has not been optimized for speed, nor does it use parallelism across arms.
+
 
 ## References
 
@@ -125,3 +129,5 @@ Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (
 [9] Dudík, M., Erhan, D., Langford, J., & Li, L. (2014). Doubly robust policy evaluation and optimization. Statistical Science, 485-511.
 
 [10] Chu, W., Li, L., Reyzin, L., & Schapire, R. (2011, June). Contextual bandits with linear payoff functions. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (pp. 208-214).
+
+[11] Kuhn, M., & Johnson, K. (2013). Applied predictive modeling (Vol. 26). New York: Springer.

@@ -55,8 +55,8 @@ def _converted_decision_function(self, X):
 def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
 
-def _check_constructor_input(base_algorithm,nchoices,batch_train=False):
-    assert nchoices>2
+def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
+    assert nchoices > 2
     assert isinstance(nchoices, int)
     assert ('fit' in dir(base_algorithm)) and ('predict' in dir(base_algorithm))
     if batch_train:
@@ -84,7 +84,7 @@ def _check_smoothing(smoothing):
     assert len(smoothing) >= 2
     assert (smoothing[0] >= 0) & (smoothing[1] >= 0)
     assert smoothing[1] > smoothing[0]
-    return (smooth[0], smooth[1])
+    return smoothing[0], smoothing[1]
 
 
 def _check_fit_input(X,a,r):
@@ -121,9 +121,99 @@ def _check_1d_inp(y):
     assert len(y.shape)==1
     return y
 
+def _check_active_inp(self, grad_pos, grad_neg, case_one_class):
+    if (grad_pos == 'auto') or (grad_neg == 'auto'):
+        _check_autograd_supported(base_algorithm)
+        self.grad_pos = _logistic_grad_pos
+        self.grad_neg = _logistic_grad_neg
+
+    else:
+        assert callable(grad_pos)
+        assert callable(grad_neg)
+        self.grad_pos = grad_pos
+        self.grad_neg = grad_neg
+
+    if case_one_class == 'auto':
+        self._force_fit = False
+        self._rand_grad = _gen_random_grad
+    elif case_one_class is None:
+        self._force_fit = True
+        self._rand_grad = None
+    else:
+        assert callable(case_one_class)
+        self._force_fit = False
+        self._rand_grad = case_one_class
+    self.case_one_class = case_one_class
+
+def _extract_regularization(base_algorithm):
+    if base_algorithm.__class__.__name__ == 'LogisticRegression':
+        return 1 / base_algorithm.C
+    elif base_algorithm.__class__.__name__ == 'SGDClassifier':
+        return base_algorithm.alpha
+    elif base_algorithm.__class__.__name__ == 'RidgeClassifier':
+        return base_algorithm.alpha
+    else:
+        raise ValueError("'auto' option only available for 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.")
+    return None
+
+def _logistic_grad_norm(X, y, pred, base_algorithm):
+    coef = base_algorithm.coef_.reshape(-1)
+    intercept = base_algorithm.intercept
+    err = pred - y
+
+    if X.__class__.__name__ in ['coo_matrix', 'csr_matrix', 'csc_matrix']:
+        if X.__class__.__name__ != 'csr_matrix':
+            from scipy.sparse import csr_matrix
+            X = csr_matrix(X)
+        grad_norm = X.multiply(err)
+        is_sp = True
+    else:
+        grad_norm = X * err
+        is_sp = False
+
+    ## coefficients
+    grad_norm = np.linalg.norm(grad_norm, axis=1) ** 2
+
+    ## intercept
+    grad_norm += err ** 2
+
+    return grad_norm
+
+def _logistic_grad_pos(base_algorithm, X, pred):
+    return _logistic_grad_norm(X, np.ones(X.shape[0]), pred, base_algorithm)
+
+def _logistic_grad_neg(base_algorithm, X, pred):
+    return _logistic_grad_norm(X, np.zeros(X.shape[0]), pred, base_algorithm)
+
+def _check_autograd_supported(base_algorithm):
+    assert base_algorithm.__class__.__name__ in ['LogisticRegression', 'SGDClassifier', 'RidgeClassifier']
+    if base_algorithm.__class__.__name__ == 'LogisticRegression':
+        if base_algorithm.penalty != 'l2':
+            raise ValueError("Automatic gradients only defined for LogisticRegression with l2 regularization.")
+        if base_algorithm.intercept_scaling != 1:
+            raise ValueError("Automatic gradients for LogisticRegression not implemented with 'intercept_scaling'.")
+
+    if base_algorithm.__class__.__name__ == 'RidgeClassifier':
+        if base_algorithm.normalize:
+            raise ValueError("Automatic gradients for LogisticRegression only implemented without 'normalize'.")
+
+    if base_algorithm.__class__.__name__ == 'SGDClassifier':
+        if base_algorithm.loss != 'log':
+            raise ValueError("Automatic gradients for LogisticRegression only implemented with logistic loss.")
+        if base_algorithm.penalty != 'l2':
+            raise ValueError("Automatic gradients only defined for LogisticRegression with l2 regularization.")
+
+    if not base_algorithm.fit_intercept:
+        raise ValueError("Automatic gradients only defined for LogisticRegression with intercept.")
+    if base_algorithm.class_weight is not None:
+        raise ValueError("Automatic gradients for LogisticRegression not supported with 'class_weight'.")
+
+def _gen_random_grad(X):
+    return np.random.gamma(np.sqrt(X.shape[1]), 1, size=X.shape[0])
+
 def _apply_smoothing(preds, smoothing, counts):
     if (smoothing is not None) and (counts is not None):
-        preds[:,:] = (preds * counts + smoothing[0]) / (counts + smoothing[1])
+        preds[:, :] = (preds * counts + smoothing[0]) / (counts + smoothing[1])
     return None
 
 def _apply_sigmoid(x):
@@ -144,6 +234,14 @@ def _apply_softmax(x):
     x[:, :] = np.exp(x - x.max(axis=1).reshape((-1,1)))
     x[:, :] = x / x.sum(axis=1).reshape((-1,1))
     return None
+
+def _update_beta_counters(beta_counters, yclass, choice, thr):
+    if beta_counters[0, choice] == 0:
+        n_pos = yclass.sum()
+        beta_counters[1, choice] += n_pos
+        beta_counters[2, choice] += yclass.shape[0] - n_pos
+        if (beta_counters[1, choice] > thr) and (beta_counters[2, choice] > thr):
+            beta_counters[0, choice] = 1
 
 class _BetaPredictor:
     def __init__(self, a, b):
@@ -260,17 +358,25 @@ class _ArrBSClassif:
         self.algos=[[deepcopy(base) for i in range(samples)] for j in range(n)]
         self.n=n
         self.samples=samples
-        self.partialfit=partialfit
         self.partial_method=partial_method
         self.smooth=smooth
         self.assume_un=assume_un
-        ## counters are row vectors to sum them later to pred matrix
+        self.thr = thr
+        self.partialfit = bool(partialfit)
         if self.smooth:
-            self.counters = np.zeros((1,n))
+            self.counters = np.zeros((1,n)) ## counters are row vectors to sum them later to pred matrix
         else:
             self.counters = None
 
         if self.partialfit:
+            ## in case it has beta prior, keeps track of the counters until no longer needed
+            self.alpha = alpha
+            self.beta = beta
+            if self.thr > 0:
+                # first row: whether it shall use the prior
+                # second row: number of positives
+                # third row: number of negatives
+                self.beta_counters = np.zeros((3, n))
             self.partial_fit(X,a,r)
         else:
             for choice in range(n):
@@ -287,17 +393,14 @@ class _ArrBSClassif:
                     self.counters[0, choice] += yclass.shape[0]
 
                 n_pos = yclass.sum()
-                if n_pos < thr:
+                if (n_pos < thr) or ((yclass.shape[0] - n_pos) < thr):
                     self.algos[choice] = _BetaPredictor(alpha + n_pos, beta + yclass.shape[0] - n_pos)
                     continue
-                if (n_pos == 0) and (thr < 1):
+                if n_pos == 0:
                     self.algos[choice] =_ZeroPredictor()
                     continue
                 if (n_pos == yclass.shape[0]):
-                    if thr < 1:
-                        self.algos[choice] = _OnePredictor()
-                    else:
-                        self.algos[choice] = _BetaPredictor(alpha + n_pos, beta + yclass.shape[0] - n_pos)
+                    self.algos[choice] = _OnePredictor()
                     continue
 
                 xclass = X[this_choice, :]
@@ -328,18 +431,21 @@ class _ArrBSClassif:
             if self.smooth is not None:
                 self.counters[0, choice] += yclass.shape[0]
 
-            xclass=X[this_choice,:]
-            
+            xclass = X[this_choice, :]
             if xclass.shape[0] > 0:
                 for sample in range(self.samples):
                     if self.partial_method == 'poisson':
                         appear_times = np.repeat(np.arange(xclass.shape[0]), np.random.poisson(1, size=xclass.shape[0]))
                         xsample = xclass[appear_times]
                         ysample = yclass[appear_times]
-                        self.algos[choice][sample].partial_fit(xsample, ysample, classes=[0,1])
+                        self.algos[choice][sample].partial_fit(xsample, ysample, classes=[0, 1])
                     else:
                         self.algos[choice][sample].partial_fit(xclass, yclass,
                                 classes=[0,1], sample_weight=np.random.gamma(1, 1, size=xclass.shape[0]))
+
+                ## update the beta counters if needed
+                if self.thr > 0:
+                    _update_beta_counters(self.beta_counters, yclass, choice, thr)
     
     def score_avg(self,X):
         preds=np.zeros((X.shape[0],self.n))
@@ -349,6 +455,14 @@ class _ArrBSClassif:
             if not (type(self.algos[choice]) == list):
                 preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
+
+            ## case when using partial_fit and need beta predictions
+            if self.partialfit:
+                if (self.thr > 0) and (self.beta_counters[0, choice] == 0):
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
 
             ## case when there are fitted models
             for sample in range(self.samples):
@@ -366,15 +480,21 @@ class _ArrBSClassif:
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
     
-    def score_max(self,X,perc=100):
-        global preds, arr_compare, choice, qperc
-        qperc=perc
-        preds=np.zeros((X.shape[0],self.n))
+    def score_max(self, X, perc=100):
+        preds = np.zeros( (X.shape[0], self.n) )
         for choice in range(self.n):
             ## case when no model has been fit, uses dummy predictors from module
             if not (type(self.algos[choice]) == list):
                 preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
+
+            ## case when using partial_fit and need beta predictions
+            if self.partialfit:
+                if (self.thr > 0) and (self.beta_counters[0, choice] == 0):
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
 
             ## case when there are fitted models
             arr_compare = list()
@@ -388,21 +508,28 @@ class _ArrBSClassif:
                 else:
                     arr_compare.append(self.algos[choice][sample].predict(X))
                 
-            if perc==100:
-                preds[:,choice]=np.vstack(arr_compare).max(axis=0)
+            if perc == 100:
+                preds[:,choice] = np.vstack(arr_compare).max(axis=0)
             else:
-                preds[:,choice]=np.percentile(np.vstack(arr_compare), perc, axis=0)
+                preds[:,choice] = np.percentile(np.vstack(arr_compare), perc, axis=0)
         
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
     
-    def score_rnd(self,X):
-        preds=np.zeros((X.shape[0],self.n))
+    def score_rnd(self, X):
+        preds = np.zeros( (X.shape[0], self.n) )
         for choice in range(self.n):
             ## case when no model has been fit, uses dummy predictors from module
-            if not (type(self.algos[choice]) == list):
+            if type(self.algos[choice]) != list:
                 preds[:, choice] = self.algos[choice].decision_function(X)
                 continue
+            ## case when using partial_fit and need beta predictions
+            if self.partialfit:
+                if (self.thr > 0) and (self.beta_counters[0, choice] == 0):
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
             ## case when there are fitted models
             sample_take = np.random.randint(self.samples)
             if 'predict_proba_new' in dir(self.algos[choice][sample_take]):
@@ -418,16 +545,27 @@ class _ArrBSClassif:
         return preds
     
 class _OneVsRest:
-    def __init__(self,base,X,a,r,n,thr,alpha,beta,smooth=False,assume_un=False,partialfit=False):
+    def __init__(self, base, X, a, r, n, thr, alpha, beta, smooth=False, assume_un=False, partialfit=False, force_fit=False):
         if partialfit:
-            base=_modify_predict_method(base)
+            base = _modify_predict_method(base)
         if 'predict_proba' not in dir(base):
             base = _convert_decision_function(base)
-        self.base=base
-        self.algos=[deepcopy(base) for i in range(n)]
-        self.n=n
-        self.smooth=smooth
-        self.assume_un=assume_un
+        self.base = base
+        self.algos = [deepcopy(base) for i in range(n)]
+        self.n = n
+        self.smooth = smooth
+        self.assume_un = assume_un
+        self.force_fit = force_fit
+        self.thr = thr
+        self.partialfit = bool(partialfit)
+        if (force_fit or partialfit) and (thr > 0):
+            ## in case it has beta prior, keeps track of the counters until no longer needed
+            self.alpha = alpha
+            self.beta = beta
+            # first row: whether it shall use the prior
+            # second row: number of positives
+            # third row: number of negatives
+            self.beta_counters = np.zeros((3, n))
 
         ## counters are row vectors to sum them later to pred matrix
         if self.smooth is not None:
@@ -436,7 +574,7 @@ class _OneVsRest:
             self.counters = None
             
         if partialfit:
-            self.partial_fit(X,a,r)
+            self.partial_fit(X, a, r)
         else:
             for choice in range(n):
                 if self.assume_un:
@@ -446,23 +584,32 @@ class _OneVsRest:
                     yclass[arms_w_rew&(~this_choice)]=0
                     this_choice=this_choice|arms_w_rew
                 else:
-                    this_choice=(a==choice)
-                    yclass=r[this_choice]
-                n_pos=yclass.sum()
+                    this_choice = (a == choice)
+                    yclass = r[this_choice]
+
+                n_pos = yclass.sum()
                 if self.smooth is not None:
                     self.counters[0, choice] += yclass.shape[0]
-                if n_pos<thr:
-                    self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
-                    continue
-                if n_pos==yclass.shape[0]:
-                    self.algos[choice]=_OnePredictor()
-                    continue
-                if (n_pos==0) and (thr<1):
-                    self.algos[choice]=_ZeroPredictor()
-                xclass=X[this_choice,:]
-                self.algos[choice].fit(xclass,yclass)
+                if (n_pos < thr) or ((yclass.shape[0] - n_pos) < thr):
+                    if not force_fit:
+                        self.algos[choice] = _BetaPredictor(alpha + n_pos, beta + yclass.shape[0] - n_pos)
+                        continue
+                if n_pos == 0:
+                    if not force_fit:
+                        self.algos[choice] = _ZeroPredictor()
+                        continue
+                if n_pos == yclass.shape[0]:
+                    if not force_fit:
+                        self.algos[choice] = _OnePredictor()
+                        continue
+                xclass = X[this_choice, :]
+                self.algos[choice].fit(xclass, yclass)
+
+                if self.force_fit and (thr > 0):
+                    _update_beta_counters(self.beta_counters, yclass, choice, thr)
+
                 
-    def partial_fit(self,X,a,r):
+    def partial_fit(self, X, a, r):
         for choice in range(self.n):
             if self.assume_un:
                 this_choice=(a==choice)
@@ -477,15 +624,26 @@ class _OneVsRest:
             if self.smooth is not None:
                 self.counters[choice] += yclass.shape[0]
 
-            xclass=X[this_choice,:]
-            if xclass.shape[0]>0:
-                self.algos[choice].partial_fit(xclass,yclass,classes=[0,1])
-            
-            
+            xclass = X[this_choice,:]
+            if (xclass.shape[0] > 0) or self.force_fit:
+                self.algos[choice].partial_fit(xclass, yclass, classes = [0, 1])
+
+            ## update the beta counters if needed
+            if self.thr > 0:
+                _update_beta_counters(self.beta_counters, yclass, choice, thr)
     
     def decision_function(self,X):
         preds = np.zeros((X.shape[0], self.n))
         for choice in range(self.n):
+
+            ## case when using partial_fit and need beta predictions
+            if (self.partialfit or self.force_fit) and (self.thr > 0):
+                if self.beta_counters[0, choice] == 0:
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
+
             try:
                 preds[:, choice] = self.algos[choice].decision_function(X)
             except:
@@ -503,6 +661,14 @@ class _OneVsRest:
     def predict_proba(self,X):
         preds = np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
+            ## case when using partial_fit and need beta predictions
+            if (self.partialfit or self.force_fit) and (self.thr > 0):
+                if self.beta_counters[0, choice] == 0:
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
+
             if 'predict_proba_new' in dir(self.base):
                 preds[:, choice] = self.algos[choice].predict_proba_new(X)[:,1]
             elif 'predict_proba' in dir(self.base):
@@ -520,6 +686,13 @@ class _OneVsRest:
     def predict_proba_raw(self,X):
         preds=np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
+            ## case when using partial_fit and need beta predictions
+            if (self.partialfit or self.force_fit) and (self.thr > 0):
+                if self.beta_counters[0, choice] == 0:
+                    preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
+                                                      self.beta + self.beta_counters[2, choice],
+                                                      size=preds.shape[0])
+                    continue
             if 'predict_proba_new' in dir(self.algos[choice]):
                 preds[:,choice]=self.algos[choice].predict_proba_new(X)[:,1]
             elif 'predict_proba' in dir(self.algos[choice]):
