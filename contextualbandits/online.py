@@ -1,9 +1,9 @@
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
             _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
-            _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\
+            _calculate_beta_prior, _BayesianLogisticRegression,\
             _check_bools, _LinUCBSingle, _modify_predict_method, _check_active_inp, \
-            _check_autograd_supported, _logistic_grad_pos, _logistic_grad_neg, _gen_random_grad, \
+            _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp
 import warnings
 import pandas as pd, numpy as np
@@ -838,19 +838,18 @@ class AdaptiveGreedy:
         How to select arms when predictions are below the threshold. If passing None, selects them at random (default).
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
         Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
-    grad_pos : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
-        Function that calculates the row-wise norm of the gradient of observations in X if their label were positive.
+    f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+        Function that calculates the row-wise norm of the gradient from observations in X if their class were
+        negative (first column) positive (second column).
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    grad_neg : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
-        Function that calculates the row-wise norm of the gradient of observations in X if their label were negative.
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    case_one_class : str 'auto', None, or function(X) -> array(n_samples,)
+    case_one_class : str 'auto', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
-        problems, that the gradients can be calculated with these fitted models, and that it can calculate gradients and predictions
-        with a 'base_algorithm' object that has not been fitted.
-        If passing a function, will take the output of it as the gradients when it compares them against other arms/classes.
+        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
+        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
+        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
+        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
         If passing 'auto', will generate random numbers ~ Gamma(sqrt(n_features), 1).
     
     References
@@ -861,7 +860,7 @@ class AdaptiveGreedy:
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
                      decay_type='percentile', initial_thr='auto', fixed_thr=False,
                      beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False,
-                     active_choice=None, grad_pos='auto', grad_neg='auto', case_one_class='auto'):
+                     active_choice=None, f_grad_norm='auto', case_one_class='auto'):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
@@ -890,7 +889,7 @@ class AdaptiveGreedy:
 
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
-            _check_active_inp(self, base_algorithm, grad_pos, grad_neg, case_one_class)
+            _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         else:
             self._force_fit = False
         self.active_choice = active_choice
@@ -921,7 +920,8 @@ class AdaptiveGreedy:
                                    self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
-                                   self._force_fit)
+                                   self._force_fit,
+                                   force_counters = self.active_choice is not None)
         return self
     
     def partial_fit(self, X, a, r):
@@ -1275,19 +1275,18 @@ class ActiveExplorer:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    grad_pos : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
-        Function that calculates the row-wise norm of the gradient of observations in X if their label were positive.
+    f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+        Function that calculates the row-wise norm of the gradient from observations in X if their class were
+        negative (first column) positive (second column).
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    grad_neg : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
-        Function that calculates the row-wise norm of the gradient of observations in X if their label were negative.
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    case_one_class : str 'auto', None, or function(X) -> array(n_samples,)
+    case_one_class : str 'auto', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
-        problems, that the gradients can be calculated with these fitted models, and that it can calculate gradients and predictions
-        with a 'base_algorithm' object that has not been fitted.
-        If passing a function, will take the output of it as the gradients when it compares them against other arms/classes.
+        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
+        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
+        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
+        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
         If passing 'auto', will generate random numbers ~ Gamma(sqrt(n_features), 1).
     nchoices : int
         Number of arms/labels to choose from.
@@ -1318,10 +1317,10 @@ class ActiveExplorer:
     random_seed : None or int
         Random state or seed to pass to the solver.
     """
-    def __init__(self, base_algorithm, nchoices, grad_pos='auto', grad_neg='auto', case_one_class='auto',
+    def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False, random_seed=None):
-        _check_active_inp(self, base_algorithm, grad_pos, grad_neg, case_one_class)
+        _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         _check_constructor_input(base_algorithm, nchoices, batch_train)
         self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
@@ -1357,14 +1356,15 @@ class ActiveExplorer:
         self : obj
             Copy of this same object
         """
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
+        self._oracles = _OneVsRest(self.base_algorithm,
+                                   X, a, r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
                                    self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
-                                   self._force_fit)
+                                   force_fit = self._force_fit,
+                                   force_counters = True)
         return self
     
     def partial_fit(self, X, a, r):
@@ -1394,7 +1394,7 @@ class ActiveExplorer:
             return self.fit(X,a,r)
             
     
-    def predict(self, X, exploit=False, gradient_calc='weighted'):
+    def predict(self, X, exploit=False, gradient_calc='min'):
         """
         Selects actions according to this policy for new data.
         
@@ -1432,16 +1432,17 @@ class ActiveExplorer:
     def _crit_active(self, X, pred, grad_crit):
         for choice in range(self.nchoices):
             if self._oracles.should_calculate_grad(choice) or self._force_fit:
-                grad_both = np.c_[self.grad_pos(self._oracles.algos[choice], X, pred[:, choice]), self.grad_neg(self._oracles.algos[choice], X, pred[:, choice])]
+                grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
             else:
-                grad_both = np.c_[self._rand_grad(X), self._rand_grad(X)]
+                grad_norms = self._rand_grad_norms(X,
+                    self._oracles.get_n_pos(choice), self._oracles.get_n_neg(choice))
 
             if grad_crit == 'min':
-                pred[:, choice] = grad_both.min(axis = 1)
+                pred[:, choice] = grad_norms.min(axis = 1)
             elif grad_crit == 'max':
-                pred[:, choice] = grad_both.max(axis = 1)
+                pred[:, choice] = grad_norms.max(axis = 1)
             elif grad_crit == 'weighted':
-                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_both).sum(axis = 1)
+                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_norms).sum(axis = 1)
             else:
                 raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
 
@@ -1738,7 +1739,7 @@ class BayesianUCB:
         Method used to sample coefficients (see PyMC3's documentation for mode details).
     n_samples : int
         Number of samples to take when making predictions.
-    n_iter : int
+    n_iter : int or str 'auto'
         Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
         will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
         If passing 'auto', will use 2000 for ADVI and 100 for NUTS, but this might me insufficient.
@@ -1750,24 +1751,36 @@ class BayesianUCB:
         beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
+        want to define a class that embeds it with some recalibration built-in.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     """
-    def __init__(self, nchoices, percentile=80, method='advi', n_samples='auto', n_iter='auto', beta_prior='auto'):
+    def __init__(self, nchoices, percentile=80, method='advi', n_samples=20, n_iter='auto',
+                 beta_prior='auto', smoothing=None, assume_unique_reward=False):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
-
-        import pymc3 as pm
-        if beta_prior=='auto':
+        if beta_prior == 'auto':
             self.beta_prior = ((5/nchoices, 4), 2)
         else:
             self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
+        self.smoothing = _check_smoothing(smoothing)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.nchoices = nchoices
         assert (percentile >= 0) and (percentile <= 100)
         self.percentile = percentile
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method
+        self.base_algorithm = _BayesianLogisticRegression(method=self.method, niter=self.n_iter,
+            nsamples=self.n_samples, mode='ucb', perc=self.percentile)
     
     def fit(self, X, a, r):
         """
@@ -1783,15 +1796,18 @@ class BayesianUCB:
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
 
         Returns
-        -------
+        ------- 
         self : obj
             Copy of this same object
         """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_BayesianOneVsRest(X,a,r,
-                                         self.nchoices,
-                                         self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                         self.method, self.nsamples, self.niter)
+        X, a, r = _check_fit_input(X, a, r)
+        self._oracles = _OneVsRest(self.base_algorithm,
+                                   X, a, r,
+                                   self.nchoices,
+                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
+                                   self.smoothing,
+                                   self.assume_unique_reward,
+                                   False)
         return self
     
     def decision_function(self, X):
@@ -1809,7 +1825,7 @@ class BayesianUCB:
             Scores following this policy for each arm.
         """
         X = _check_X_input(X)
-        return self._oracles.predict_ucb(X, self.percentile)
+        return self._oracles.predict_proba(X)
     
     def predict(self, X, exploit=False):
         """
@@ -1828,9 +1844,6 @@ class BayesianUCB:
         pred : array (n_samples,)
             Actions chosen by the policy.
         """
-        if exploit:
-            X = _check_X_input(X)
-            return np.argmax(self._oracles.predict_avg(X), axis=1)
         return np.argmax(self.decision_function(X), axis=1)
 
 
@@ -1865,22 +1878,32 @@ class BayesianTS:
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        
-    References
-    ----------
-    [1] An empirical evaluation of thompson sampling (2011)
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
+        want to define a class that embeds it with some recalibration built-in.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to False,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     """
-    def __init__(self, nchoices, method='advi', n_samples='auto', n_iter='auto', beta_prior='auto'):
+    def __init__(self, nchoices, method='advi', n_samples=20, n_iter='auto',
+                 beta_prior='auto', smoothing=None, assume_unique_reward=False):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
         self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
+        self.smoothing = _check_smoothing(smoothing)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.nchoices = nchoices
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method
-    
+        self.base_algorithm = _BayesianLogisticRegression(method=self.method, niter=self.n_iter,
+            nsamples=self.n_samples, mode='ts')
+
     def fit(self, X, a, r):
         """
         Samples coefficients for Logistic Regression models from partially-labeled data, with
@@ -1900,11 +1923,14 @@ class BayesianTS:
         self : obj
             Copy of this same object
         """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_BayesianOneVsRest(X,a,r,
-                                         self.nchoices,
-                                         self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                         self.method, self.n_iter, self.n_samples)
+        X, a, r = _check_fit_input(X, a, r)
+        self._oracles = _OneVsRest(self.base_algorithm,
+                                   X,a,r,
+                                   self.nchoices,
+                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.smoothing,
+                                   self.assume_unique_reward,
+                                   False)
         return self
     
     def decision_function(self, X):
@@ -1921,8 +1947,8 @@ class BayesianTS:
         scores : array (n_samples, n_choices)
             Scores following this policy for each arm.
         """
-        X=_check_X_input(X)
-        return self._oracles.predict_rnd(X)
+        X = _check_X_input(X)
+        return self._oracles.predict_proba(X)
     
     def predict(self, X, exploit=False):
         """
@@ -1941,7 +1967,4 @@ class BayesianTS:
         pred : array (n_samples,)
             Actions chosen by the policy.
         """
-        if exploit:
-            X=_check_X_input(X)
-            return np.argmax(self._oracles.predict_avg(X), axis=1)
         return np.argmax(self.decision_function(X), axis=1)
