@@ -3,7 +3,8 @@ from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
             _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
             _calculate_beta_prior, _BayesianOneVsRest, _BayesianLogisticRegression,\
             _check_bools, _LinUCBSingle, _modify_predict_method, _check_active_inp, \
-            _check_autograd_supported, _logistic_grad_pos, _logistic_grad_neg, _gen_random_grad
+            _check_autograd_supported, _logistic_grad_pos, _logistic_grad_neg, _gen_random_grad, \
+            _check_bay_inp
 import warnings
 import pandas as pd, numpy as np
 
@@ -41,7 +42,7 @@ class BootstrappedUCB:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 3)
+        beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
@@ -72,9 +73,9 @@ class BootstrappedUCB:
         
         self.base_algorithm = base_algorithm
         if beta_prior=='auto':
-            self.beta_prior = ((5/nchoices, 4), 3)
+            self.beta_prior = ((5/nchoices, 4), 2)
         else:
-            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.nchoices = nchoices
         self.nsamples = nsamples
@@ -229,7 +230,7 @@ class BootstrappedTS:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -260,7 +261,7 @@ class BootstrappedTS:
         assert nsamples>=2
         assert (batch_sample_method=='gamma') or (batch_sample_method=='poisson')
         
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -405,7 +406,7 @@ class SeparateClassifiers:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -425,7 +426,7 @@ class SeparateClassifiers:
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
                  batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -607,7 +608,7 @@ class EpsilonGreedy:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -631,7 +632,7 @@ class EpsilonGreedy:
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
                  beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -812,16 +813,12 @@ class AdaptiveGreedy:
         If set to 'auto', will be calculated as initial_thr = 1.5/nchoices
     fixed_thr : bool
         Whether the threshold is to be kept fixed, or updated to a percentile after N predictions.
-    greedy_choice : None or str in {'min', 'max', 'weighted'}
-        How to select arms when predictions are below the threshold. If passing None, selects them at random.
-        If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
-        Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -837,6 +834,24 @@ class AdaptiveGreedy:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    active_choice : None or str in {'min', 'max', 'weighted'}
+        How to select arms when predictions are below the threshold. If passing None, selects them at random (default).
+        If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
+        Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
+    grad_pos : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
+        Function that calculates the row-wise norm of the gradient of observations in X if their label were positive.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
+    grad_neg : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples,)
+        Function that calculates the row-wise norm of the gradient of observations in X if their label were negative.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
+    case_one_class : str 'auto', None, or function(X) -> array(n_samples,)
+        If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
+        will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
+        If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
+        problems, that the gradients can be calculated with these fitted models, and that it can calculate gradients and predictions
+        with a 'base_algorithm' object that has not been fitted.
+        If passing a function, will take the output of it as the gradients when it compares them against other arms/classes.
+        If passing 'auto', will generate random numbers ~ Gamma(sqrt(n_features), 1).
     
     References
     ----------
@@ -848,7 +863,7 @@ class AdaptiveGreedy:
                      beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False,
                      active_choice=None, grad_pos='auto', grad_neg='auto', case_one_class='auto'):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -875,10 +890,10 @@ class AdaptiveGreedy:
 
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
-            self.active_choice = active_choice
-            _check_active_inp(self, grad_pos, grad_neg, case_one_class)
+            _check_active_inp(self, base_algorithm, grad_pos, grad_neg, case_one_class)
         else:
             self._force_fit = False
+        self.active_choice = active_choice
     
     def fit(self, X, a, r):
         """
@@ -972,13 +987,13 @@ class AdaptiveGreedy:
             remainder_window = self.window_size - self.window_cnt
             
             # case 1: number of predictions to make would still fit within current window
-            if remainder_window >= X.shape[0]:
+            if remainder_window > X.shape[0]:
                 pred, pred_max = self._calc_preds(X)
                 self.window_cnt += X.shape[0]
                 self.window = np.r_[self.window, pred_max]
                 
                 # apply decay for all observations
-                self._apply_decay(self, X.shape[0])
+                self._apply_decay(X.shape[0])
 
             # case 2: number of predictions to make would span more than current window
             else:
@@ -999,7 +1014,7 @@ class AdaptiveGreedy:
                 self.window_cnt = 0
                 
                 # decay threshold only for these observations
-                self._apply_decay(self, remainder_window)
+                self._apply_decay(remainder_window)
                 
                 # predict the rest recursively
                 pred_all[remainder_window:] = self.predict(X[remainder_window:, :])
@@ -1021,7 +1036,8 @@ class AdaptiveGreedy:
         pred_max = pred_proba.max(axis=1)
         pred = np.argmax(pred_proba, axis=1)
         set_greedy = pred_max <= self.thr
-        self._choose_greedy(set_greedy, X, pred, pred_proba)
+        if set_greedy.sum() > 0:
+            self._choose_greedy(set_greedy, X, pred, pred_proba)
         return pred, pred_max
 
     def _choose_greedy(self, set_greedy, X, pred, pred_all):
@@ -1080,7 +1096,7 @@ class ExploreFirst:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1098,9 +1114,9 @@ class ExploreFirst:
         fit to that observation too, having negative label.
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
-                 beta_prior='auto',smoothing=None, batch_train=False, assume_unique_reward=False):
+                 beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -1188,30 +1204,30 @@ class ExploreFirst:
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
-        X=_check_X_input(X)
+        X = _check_X_input(X)
         
-        if X.shape[0]==0:
+        if X.shape[0] == 0:
             return np.array([])
         
         if exploit:
             return self._oracles.predict(X)
         
-        if self.explore_cnt<self.explore_rounds:
-            self.explore_cnt+=X.shape[0]
+        if self.explore_cnt < self.explore_rounds:
+            self.explore_cnt += X.shape[0]
             
             # case 1: all predictions are within allowance
-            if self.explore_cnt<=self.explore_rounds:
-                return np.random.randint(self.nchoices, size=X.shape[0])
+            if self.explore_cnt <= self.explore_rounds:
+                return np.random.randint(self.nchoices, size = X.shape[0])
             
             # case 2: some predictions are within allowance, others are not
             else:
-                nexplore=self.explore_rounds-self.explore_cnt
-                pred=np.zeros(X.shape[0])
-                pred[:nexplore]=np.random.randint(self.nchoices, nexplore)
-                pred[nexplore:]=self.predict(X)
+                n_explore = self.explore_rounds - self.explore_cnt
+                pred = np.zeros(X.shape[0])
+                pred[:n_explore] = np.random.randint(self.nchoices, n_explore)
+                pred[n_explore:] = self._oracles.predict(X)
                 return pred
         else:
-            return self._oracles.predict(X).reshape(-1)
+            return self._oracles.predict(X)
         
     def decision_function(self, X):
         """
@@ -1285,7 +1301,7 @@ class ActiveExplorer:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1302,12 +1318,12 @@ class ActiveExplorer:
     random_seed : None or int
         Random state or seed to pass to the solver.
     """
-    def __init__(self, base_algorithm, nchoices, grad_pos='auto', grad_neg='auto',
+    def __init__(self, base_algorithm, nchoices, grad_pos='auto', grad_neg='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False, random_seed=None):
-        _check_active_inp(self, grad_pos, grad_neg, case_one_class)
+        _check_active_inp(self, base_algorithm, grad_pos, grad_neg, case_one_class)
         _check_constructor_input(base_algorithm, nchoices, batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
 
         if batch_train:
@@ -1405,7 +1421,8 @@ class ActiveExplorer:
         pred = self._oracles.decision_function(X)
         if not exploit:
             change_greedy = np.random.random(size=X.shape[0]) <= self.explore_prob
-            self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
+            if change_greedy.sum() > 0:
+                self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
             
             if self.decay is not None:
                 self.explore_prob *= self.decay ** X.shape[0]
@@ -1414,17 +1431,17 @@ class ActiveExplorer:
 
     def _crit_active(self, X, pred, grad_crit):
         for choice in range(self.nchoices):
-            if self.oracles.algos[choice].__class__.__name__ in ['_BetaPredictor', '_OnePredictor', '_ZeroPredictor']:
-                grad_both = np.c_[self._rand_grad(X), self._rand_grad(X)]
+            if self._oracles.should_calculate_grad(choice) or self._force_fit:
+                grad_both = np.c_[self.grad_pos(self._oracles.algos[choice], X, pred[:, choice]), self.grad_neg(self._oracles.algos[choice], X, pred[:, choice])]
             else:
-                grad_both = np.c_[self.grad_pos(self.oracles.algos[choice], X, pred[:, choice]), self.grad_neg(self.oracles.algos[choice], X, pred[:, choice])]
+                grad_both = np.c_[self._rand_grad(X), self._rand_grad(X)]
 
             if grad_crit == 'min':
                 pred[:, choice] = grad_both.min(axis = 1)
             elif grad_crit == 'max':
                 pred[:, choice] = grad_both.max(axis = 1)
             elif grad_crit == 'weighted':
-                pred[:, choice] = (pred * grad_both).sum(axis = 1)
+                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_both).sum(axis = 1)
             else:
                 raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
 
@@ -1452,7 +1469,7 @@ class SoftmaxExplorer:
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1472,7 +1489,7 @@ class SoftmaxExplorer:
     def __init__(self, base_algorithm, nchoices, beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
@@ -1716,19 +1733,25 @@ class BayesianUCB:
     nchoices : int
         Number of arms/labels to choose from.
     percentile : int [0,100]
-        Percentile of the predictions sample to take
+        Percentile of the predictions sample to take.
     method : str, either 'advi' or 'nuts'
         Method used to sample coefficients (see PyMC3's documentation for mode details).
-     beta_prior : str 'auto', None, or tuple ((a,b), n)
+    n_samples : int
+        Number of samples to take when making predictions.
+    n_iter : int
+        Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
+        will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
+        If passing 'auto', will use 2000 for ADVI and 100 for NUTS, but this might me insufficient.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 3)
+        beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
     """
-    def __init__(self, nchoices, percentile=80, method='advi', nsamples=None, beta_prior='auto'):
+    def __init__(self, nchoices, percentile=80, method='advi', n_samples='auto', n_iter='auto', beta_prior='auto'):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
@@ -1736,15 +1759,15 @@ class BayesianUCB:
 
         import pymc3 as pm
         if beta_prior=='auto':
-            self.beta_prior = ((5/nchoices, 4), 3)
+            self.beta_prior = ((5/nchoices, 4), 2)
         else:
-            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.nchoices = nchoices
-        assert method in ['advi','nuts']
         assert (percentile >= 0) and (percentile <= 100)
-        self.method = method
         self.percentile = percentile
+        self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
+        self.method = method
     
     def fit(self, X, a, r):
         """
@@ -1768,7 +1791,7 @@ class BayesianUCB:
         self._oracles=_BayesianOneVsRest(X,a,r,
                                          self.nchoices,
                                          self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                         self.method)
+                                         self.method, self.nsamples, self.niter)
         return self
     
     def decision_function(self, X):
@@ -1785,8 +1808,8 @@ class BayesianUCB:
         scores : array (n_samples, n_choices)
             Scores following this policy for each arm.
         """
-        X=_check_X_input(X)
-        return self._oracles.predict_ucb(X,self.percentile)
+        X = _check_X_input(X)
+        return self._oracles.predict_ucb(X, self.percentile)
     
     def predict(self, X, exploit=False):
         """
@@ -1806,7 +1829,7 @@ class BayesianUCB:
             Actions chosen by the policy.
         """
         if exploit:
-            X=_check_X_input(X)
+            X = _check_X_input(X)
             return np.argmax(self._oracles.predict_avg(X), axis=1)
         return np.argmax(self.decision_function(X), axis=1)
 
@@ -1830,26 +1853,32 @@ class BayesianTS:
         Number of arms/labels to choose from.
     method : str, either 'advi' or 'nuts'
         Method used to sample coefficients (see PyMC3's documentation for mode details).
+    n_samples : int
+        Number of samples to take when making predictions.
+    n_iter : int
+        Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
+        will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
+        If passing 'auto', will use 2000 for ADVI and 100 for NUTS, but this might me insufficient.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 3)
+        beta_prior = ((3/nchoices, 4), 2)
         
     References
     ----------
     [1] An empirical evaluation of thompson sampling (2011)
     """
-    def __init__(self, nchoices, method='advi', beta_prior='auto'):
+    def __init__(self, nchoices, method='advi', n_samples='auto', n_iter='auto', beta_prior='auto'):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 3)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.nchoices = nchoices
-        assert method in ['advi', 'nuts']
+        self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method
     
     def fit(self, X, a, r):
@@ -1875,7 +1904,7 @@ class BayesianTS:
         self._oracles=_BayesianOneVsRest(X,a,r,
                                          self.nchoices,
                                          self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                         self.method)
+                                         self.method, self.n_iter, self.n_samples)
         return self
     
     def decision_function(self, X):

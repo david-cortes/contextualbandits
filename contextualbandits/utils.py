@@ -121,7 +121,26 @@ def _check_1d_inp(y):
     assert len(y.shape)==1
     return y
 
-def _check_active_inp(self, grad_pos, grad_neg, case_one_class):
+def _check_bay_inp(method, n_iter, n_samples):
+    assert method in ['advi','nuts']
+    if n_iter == 'auto':
+            if method == 'nuts':
+                n_iter = 100
+            else:
+                n_iter = 2000
+    assert n_iter > 0
+    if isinstance(n_iter, float):
+        n_iter = int(n_iter)
+    assert isinstance(n_iter, int)
+
+    assert n_samples > 0
+    if isinstance(n_samples, float):
+        n_samples = int(n_samples)
+    assert isinstance(n_samples, int)
+    
+    return n_iter, n_samples
+
+def _check_active_inp(self, base_algorithm, grad_pos, grad_neg, case_one_class):
     if (grad_pos == 'auto') or (grad_neg == 'auto'):
         _check_autograd_supported(base_algorithm)
         self.grad_pos = _logistic_grad_pos
@@ -158,7 +177,7 @@ def _extract_regularization(base_algorithm):
 
 def _logistic_grad_norm(X, y, pred, base_algorithm):
     coef = base_algorithm.coef_.reshape(-1)
-    intercept = base_algorithm.intercept
+    intercept = base_algorithm.intercept_
     err = pred - y
 
     if X.__class__.__name__ in ['coo_matrix', 'csr_matrix', 'csc_matrix']:
@@ -168,7 +187,7 @@ def _logistic_grad_norm(X, y, pred, base_algorithm):
         grad_norm = X.multiply(err)
         is_sp = True
     else:
-        grad_norm = X * err
+        grad_norm = X * err.reshape((-1, 1))
         is_sp = False
 
     ## coefficients
@@ -209,7 +228,8 @@ def _check_autograd_supported(base_algorithm):
         raise ValueError("Automatic gradients for LogisticRegression not supported with 'class_weight'.")
 
 def _gen_random_grad(X):
-    return np.random.gamma(np.sqrt(X.shape[1]), 1, size=X.shape[0])
+    # return np.random.gamma(1, 1, size=X.shape[0])
+    return np.random.gamma(np.log10(X.shape[1]), 1, size=X.shape[0])
 
 def _apply_smoothing(preds, smoothing, counts):
     if (smoothing is not None) and (counts is not None):
@@ -217,17 +237,19 @@ def _apply_smoothing(preds, smoothing, counts):
     return None
 
 def _apply_sigmoid(x):
-    if (len(x.shape) == 2):
+    if (len(x.x) == 2):
         x[:, :] = 1 / (1 + np.exp(-x))
     else:
         x[:] = 1 / (1 + np.exp(-x))
     return None
 
 def _apply_inverse_sigmoid(x):
+    x[x == 0] = 1e-7
+    x[x == 1] = 1 - 1e-7
     if (len(x.shape) == 2):
-        x[:, :] = np.log(preds / (1 - preds))
+        x[:, :] = np.log(x / (1 - x))
     else:
-        x[:] = np.log(preds / (1 - preds))
+        x[:] = np.log(x / (1 - x))
     return None
 
 def _apply_softmax(x):
@@ -445,7 +467,7 @@ class _ArrBSClassif:
 
                 ## update the beta counters if needed
                 if self.thr > 0:
-                    _update_beta_counters(self.beta_counters, yclass, choice, thr)
+                    _update_beta_counters(self.beta_counters, yclass, choice, self.thr)
     
     def score_avg(self,X):
         preds=np.zeros((X.shape[0],self.n))
@@ -630,9 +652,9 @@ class _OneVsRest:
 
             ## update the beta counters if needed
             if self.thr > 0:
-                _update_beta_counters(self.beta_counters, yclass, choice, thr)
+                _update_beta_counters(self.beta_counters, yclass, choice, self.thr)
     
-    def decision_function(self,X):
+    def decision_function(self, X):
         preds = np.zeros((X.shape[0], self.n))
         for choice in range(self.n):
 
@@ -644,21 +666,19 @@ class _OneVsRest:
                                                       size=preds.shape[0])
                     continue
 
-            try:
+            if 'predict_proba_new' in dir(self.base):
+                preds[:, choice] = self.algos[choice].predict_proba_new(X)[:,1]
+            elif 'predict_proba' in dir(self.base):
+                preds[:, choice] = self.algos[choice].predict_proba(X)[:,1]
+            elif 'decision_function' in dir(self.base):
                 preds[:, choice] = self.algos[choice].decision_function(X)
-            except:
-                try:
-                    preds[:, choice] = self.algos[choice].predict_proba(X)[:,1]
-                except:
-                    try:
-                        preds[:, choice] = self.algos[choice].predict_proba_new(X)[:,1]
-                    except:
-                        preds[:, choice] = self.algos[choice].predict(X)
+            else:
+                preds[:, choice] = self.algos[choice].predict(X)
 
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
     
-    def predict_proba(self,X):
+    def predict_proba(self, X):
         preds = np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
             ## case when using partial_fit and need beta predictions
@@ -666,7 +686,7 @@ class _OneVsRest:
                 if self.beta_counters[0, choice] == 0:
                     preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
                                                       self.beta + self.beta_counters[2, choice],
-                                                      size=preds.shape[0])
+                                                      size = preds.shape[0])
                     continue
 
             if 'predict_proba_new' in dir(self.base):
@@ -684,14 +704,14 @@ class _OneVsRest:
         return preds
     
     def predict_proba_raw(self,X):
-        preds=np.zeros((X.shape[0],self.n))
+        preds = np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
             ## case when using partial_fit and need beta predictions
             if (self.partialfit or self.force_fit) and (self.thr > 0):
                 if self.beta_counters[0, choice] == 0:
                     preds[:, choice] = np.random.beta(self.alpha + self.beta_counters[1, choice],
                                                       self.beta + self.beta_counters[2, choice],
-                                                      size=preds.shape[0])
+                                                      size = preds.shape[0])
                     continue
             if 'predict_proba_new' in dir(self.algos[choice]):
                 preds[:,choice]=self.algos[choice].predict_proba_new(X)[:,1]
@@ -705,61 +725,91 @@ class _OneVsRest:
     
     def predict(self,X):
         return np.argmax(self.decision_function(X), axis=1)
+
+    def should_calculate_grad(self, choice):
+        if self.force_fit:
+            return True
+        if self.algos[choice].__class__.__name__ in ['_BetaPredictor', '_OnePredictor', '_ZeroPredictor']:
+            return False
+        if not bool(self.thr):
+            return True
+        try:
+            return bool(self.beta_counters[0, choice])
+        except:
+            return True
+        
     
 class _BayesianLogisticRegression:
-    def __init__(self,X,y,method='advi'):
+    def __init__(self, X, y, method='advi', niter=2000, nsamples=20):
+        #TODO: reimplement with something faster than using PyMC3's black-box methods
         import pymc3 as pm, pandas as pd
-        X=_check_X_input(X)
-        y=_check_1d_inp(y)
-        assert X.shape[0]==y.shape[0]
+        X = _check_X_input(X)
+        y = _check_1d_inp(y)
+        assert X.shape[0] == y.shape[0]
+        self.nsamples = nsamples
+        self.niter = niter
 
         with pm.Model():
-            pm.glm.linear.GLM(X,y,family='binomial')
+            pm.glm.linear.GLM(X, y, family='binomial')
             pm.find_MAP()
-            if method=='advi':
-                trace=pm.fit(progressbar=False)
-            if method=='nuts':
-                trace=pm.sample(progressbar=False)
-        if method=='advi':
-            coefs=[i for i in trace.sample()]
-        if method=='nuts':
-            coefs=[i for i in trace]
-        coefs=pd.DataFrame.from_dict(coefs)
-        coefs=coefs[['Intercept']+['x'+str(i) for i in range(X.shape[1])]]
-        coefs=coefs.values
-        coefs=coefs.T
+            if method == 'advi':
+                trace = pm.fit(progressbar = False, n=niter)
+            if method == 'nuts':
+                trace = pm.sample(progressbar = False, draws=niter)
+        if method == 'advi':
+            self.coefs = [i for i in trace.sample(nsamples)]
+        elif method == 'nuts':
+            samples_chosen = np.random.choice(np.arange(len(trace)), size=nsamples, replace=False)
+            samples_chosen = set(list(samples_chosen))
+            self.coefs = [i for i in trace if i in samples_chosen]
+        else:
+            raise ValueError("'method' must be one of 'advi' or 'nuts'")
+        self.coefs = pd.DataFrame.from_dict(coefs)
+        self.coefs = coefs[ ['Intercept'] + ['x'+str(i) for i in range(X.shape[1])] ]
+        self.intercept = coefs['Intercept'].values.reshape((-1,1)).copy()
+        del self.coefs['Intercept']
+        self.coefs = coefs.values.T
         
-    def predict_all(self,X):
-        X_w_bias=np.c_[np.ones((X.shape[0],1)), X]
-        return X_w_bias.dot(coefs)
+    def predict_all(self, X):
+        pred_all = X.dot(self.coefs) + self.intercept
+        _apply_sigmoid(pred_all)
+        return pred_all
     
-    def predict_avg(self,X):
-        pred=self.predict_all(X)
-        return pred.mean(axis=1)
+    def predict_avg(self, X):
+        pred = self.predict_all(X)
+        return pred.mean(axis = 1)
     
-    def predict_ucb(self,X,p):
-        pred=self.predict_all(X)
-        return np.percentile(pred,p, axis=1).reshape(-1)
+    def predict_ucb(self, X, p):
+        pred = self.predict_all(X)
+        return np.percentile(pred, p, axis=1).reshape(-1)
     
-    def predict_rnd(self,X):
-        pred=self.predict_all(X)
-        col_take=np.random.randint(pred.shape[1], size=X.shape[0])
-        pred=pred[np.arange(X.shape[0]),col_take]
+    def predict_rnd(self, X):
+        pred = self.predict_all(X)
+        col_take = np.random.randint(pred.shape[1], size = X.shape[0])
+        pred = pred[np.arange(X.shape[0]), col_take]
         return pred.reshape(-1)
     
 class _BayesianOneVsRest:
-    def __init__(self,X,a,r,n,thr,alpha,beta,method):
-        self.n=n
-        self.algos=[None for i in range(n)]
+    def __init__(self, X, a, r, n, thr, alpha, beta, method, n_iter, n_samples):
+        self.n = n
+        self.algos = [None for i in range(n)]
         for choice in range(n):
             this_choice=(a==choice)
             yclass=r[this_choice]
-            n_pos=yclass.sum()
-            if n_pos<thr:
-                self.algos[choice]=_BetaPredictor(alpha+n_pos,beta+yclass.shape[0]-n_pos)
+
+            n_pos = yclass.sum()
+            if (n_pos < thr) or ((yclass.shape[0] - n_pos) < thr):
+                self.algos[choice] = _BetaPredictor(alpha + n_pos, beta + yclass.shape[0] - n_pos)
                 continue
-            xclass=X[this_choice,:]
-            self.algos[choice]=_BayesianLogisticRegression(xclass,yclass,method)
+            if n_pos == 0:
+                self.algos[choice] = _ZeroPredictor()
+                continue
+            if n_pos == yclass.shape[0]:
+                self.algos[choice] = _OnePredictor()
+                continue
+
+            xclass = X[this_choice, :]
+            self.algos[choice] = _BayesianLogisticRegression(xclass, yclass, method, n_iter, n_samples)
             
     def predict_ucb(self,X,p):
         pred=np.zeros((X.shape[0],self.n))
