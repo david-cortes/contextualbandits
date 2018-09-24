@@ -771,6 +771,11 @@ class AdaptiveGreedy:
     Takes the action with highest estimated reward, unless that estimation falls below a certain
     threshold, in which case it takes a random action or some other action according to
     an active learning heuristic.
+
+    Note
+    ----
+    The hyperparameters here can make a large impact on the quality of the choices. Be sure
+    to tune the threshold (or percentile), decay, and prior (or smoothing parameters).
     
     Note
     ----
@@ -795,24 +800,19 @@ class AdaptiveGreedy:
         Number of arms/labels to choose from.
     window_size : int
         Number of predictions after which the threshold will be updated to the desired percentile.
-        Ignored when passing fixed_thr=False
-    percentile : int [0,100]
+    percentile : int in [0,100] or None
         Percentile of the predictions sample to set as threshold, below which actions are random.
-        Ignored in fixed threshold mode.
-    decay : float (0,1)
+        If None, will not take percentiles but use the intial threshold and apply decay to it.
+    decay : float (0,1) or None
         After each prediction, either the threshold or the percentile gets adjusted to:
             val_t+1 = val_t*decay
-        Ignored when pasing fixed_thr=True.
     decay_type : str, either 'percentile' or 'threshold'
         Whether to decay the threshold itself or the percentile of the predictions to take after
-        each prediction. If set to 'threshold' and fixed_thr=False, the threshold will be
-        recalculated to the same percentile the next time it is updated, but with the latest predictions.
-        Ignored when passing fixed_thr=True.
+        each prediction. Ignored when using 'decay=None'. If passing 'percentile=None' and 'decay_type=percentile',
+        will be forced to 'threshold'.
     initial_thr : str 'autho' or float (0,1)
         Initial threshold for the prediction below which a random action is taken.
         If set to 'auto', will be calculated as initial_thr = 1.5/nchoices
-    fixed_thr : bool
-        Whether the threshold is to be kept fixed, or updated to a percentile after N predictions.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -840,9 +840,9 @@ class AdaptiveGreedy:
         Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
-        negative (first column) positive (second column).
+        negative (first column) or positive (second column).
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    case_one_class : str 'auto', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
@@ -850,7 +850,10 @@ class AdaptiveGreedy:
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
         were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
-        If passing 'auto', will generate random numbers ~ Gamma(sqrt(n_features), 1).
+        If passing 'auto', will generate random numbers:
+            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+        If passing 'zero', it will output zero whenever models have not been fitted.
     
     References
     ----------
@@ -858,9 +861,9 @@ class AdaptiveGreedy:
     
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
-                     decay_type='percentile', initial_thr='auto', fixed_thr=False,
-                     beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False,
-                     active_choice=None, f_grad_norm='auto', case_one_class='auto'):
+                 decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
+                 batch_train=False, assume_unique_reward=False,
+                 active_choice=None, f_grad_norm='auto', case_one_class='auto'):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
@@ -868,23 +871,27 @@ class AdaptiveGreedy:
         self.nchoices = nchoices
         
         assert isinstance(window_size, int)
-        assert isinstance(percentile, int)
+        if percentile is not None:
+            assert isinstance(percentile, int)
+            assert (percentile > 0) and (percentile < 100)
         if initial_thr == 'auto':
-            initial_thr = 1 / (nchoices / 1.5)
+            initial_thr = 1 / (np.sqrt(nchoices) * 2)
         assert isinstance(initial_thr, float)
-        assert (percentile > 0) and (percentile < 100)
         assert window_size > 0
-        assert isinstance(fixed_thr, bool)
         self.window_size = window_size
         self.percentile = percentile
         self.thr = initial_thr
-        self.fixed_thr = fixed_thr
         self.window_cnt = 0
         self.window = np.array([])
-        self.decay = decay
         assert (decay_type == 'threshold') or (decay_type == 'percentile')
+        if (decay_type == 'percentile') and (percentile is None):
+            decay_type = 'threshold'
         self.decay_type = decay_type
-        
+        if decay is not None:
+            assert (decay >= 0.0) and (decay <= 1.0)
+        if (decay_type == 'percentile') and (percentile is None):
+            decay = 1
+        self.decay = decay
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
 
         if active_choice is not None:
@@ -912,11 +919,11 @@ class AdaptiveGreedy:
         self : obj
             Copy of this same object
         """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
+        X, a, r = _check_fit_input(X, a, r)
+        self._oracles = _OneVsRest(self.base_algorithm,
+                                   X, a, r,
                                    self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
+                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
                                    self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
@@ -981,8 +988,10 @@ class AdaptiveGreedy:
             return self._oracles.predict(X)
         
         # fixed threshold, anything below is always random
-        if self.fixed_thr:
+        if (self.decay == 1) or (self.decay is None):
             pred, pred_max = self._calc_preds(X)
+
+        # variable threshold that needs to be updated
         else:
             remainder_window = self.window_size - self.window_cnt
             
@@ -1007,7 +1016,9 @@ class AdaptiveGreedy:
                 # complete window, update percentile if needed
                 self.window = np.r_[self.window, pred_max]
                 if self.decay_type == 'percentile':
+                    # print('thr before: ', self.thr, "perc: ", str(self.percentile))
                     self.thr = np.percentile(self.window, self.percentile)
+                    # print('thr after: ', self.thr, "perc: ", str(self.percentile))
 
                 # reset window
                 self.window = np.array([])
@@ -1023,19 +1034,20 @@ class AdaptiveGreedy:
         return pred
 
     def _apply_decay(self, nobs):
-        if self.decay is not None:
+        if (self.decay is not None) and (self.decay != 1):
             if self.decay_type == 'threshold':
                 self.thr *= self.decay ** nobs
             elif self.decay_type == 'percentile':
                 self.percentile *= self.decay ** nobs
             else:
-                raise ValueError("'decay_type' must be one of 'threshold', 'percentile', or None.")
+                raise ValueError("'decay_type' must be one of 'threshold' or 'percentile'")
 
     def _calc_preds(self, X):
         pred_proba = self._oracles.predict_proba(X)
         pred_max = pred_proba.max(axis=1)
         pred = np.argmax(pred_proba, axis=1)
         set_greedy = pred_max <= self.thr
+        # print("number falling below thr: ", set_greedy.sum())
         if set_greedy.sum() > 0:
             self._choose_greedy(set_greedy, X, pred, pred_proba)
         return pred, pred_max
@@ -1044,8 +1056,12 @@ class AdaptiveGreedy:
         if self.active_choice is None:
             pred[set_greedy] = np.random.randint(self.nchoices, size = set_greedy.sum())
         else:
-            ActiveExplorer._crit_active(self, X[set_greedy], pred_all[set_greedy], self.active_choice)
-            pred[set_greedy] = np.argmax(pred_all[set_greedy], axis = 1)
+            pred[set_greedy] = np.argmax(
+                ActiveExplorer._crit_active(self,
+                    X[set_greedy],
+                    pred_all[set_greedy],
+                    self.active_choice),
+                axis = 1)
     
     def decision_function(self, X):
         """
@@ -1277,9 +1293,9 @@ class ActiveExplorer:
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
-        negative (first column) positive (second column).
+        negative (first column) or positive (second column).
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
-    case_one_class : str 'auto', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
@@ -1287,7 +1303,10 @@ class ActiveExplorer:
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
         were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
-        If passing 'auto', will generate random numbers ~ Gamma(sqrt(n_features), 1).
+        If passing 'auto', will generate random numbers:
+            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+        If passing 'zero', it will output zero whenever models have not been fitted.
     nchoices : int
         Number of arms/labels to choose from.
     explore_prob : float (0,1)
@@ -1394,7 +1413,7 @@ class ActiveExplorer:
             return self.fit(X,a,r)
             
     
-    def predict(self, X, exploit=False, gradient_calc='min'):
+    def predict(self, X, exploit=False, gradient_calc='weighted'):
         """
         Selects actions according to this policy for new data.
         
@@ -1422,7 +1441,7 @@ class ActiveExplorer:
         if not exploit:
             change_greedy = np.random.random(size=X.shape[0]) <= self.explore_prob
             if change_greedy.sum() > 0:
-                self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
+                pred[change_greedy, :] = self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
             
             if self.decay is not None:
                 self.explore_prob *= self.decay ** X.shape[0]
@@ -1445,6 +1464,8 @@ class ActiveExplorer:
                 pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_norms).sum(axis = 1)
             else:
                 raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
+
+        return pred
 
 class SoftmaxExplorer:
     """

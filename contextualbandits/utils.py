@@ -155,6 +155,9 @@ def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
     if case_one_class == 'auto':
         self._force_fit = False
         self._rand_grad_norms = _gen_random_grad_norms
+    elif case_one_class == 'zero':
+        self._force_fit = False
+        self._rand_grad_norms = _gen_zero_norms
     elif case_one_class is None:
         self._force_fit = True
         self._rand_grad_norms = None
@@ -225,12 +228,13 @@ def _check_autograd_supported(base_algorithm):
         raise ValueError("Automatic gradients for LogisticRegression not supported with 'class_weight'.")
 
 def _gen_random_grad_norms(X, n_pos, n_neg):
-    # return np.random.gamma(1, 1, size=X.shape[0])
-    # return np.random.gamma(np.log10(X.shape[1]), 1, size=X.shape[0])
     magic_number = np.log10(X.shape[1])
     smooth_prop = (n_pos + 1) / (n_pos + n_neg + 2)
     return np.c_[np.random.gamma(magic_number / smooth_prop, magic_number, size=X.shape[0]),
                  np.random.gamma(magic_number * smooth_prop, magic_number, size=X.shape[0])]
+
+def _gen_zero_norms(X, n_pos, n_neg):
+    return np.zeros((X.shape[0], 2))
 
 def _apply_smoothing(preds, smoothing, counts):
     if (smoothing is not None) and (counts is not None):
@@ -401,7 +405,7 @@ class _ArrBSClassif:
                 # second row: number of positives
                 # third row: number of negatives
                 self.beta_counters = np.zeros((3, n))
-            self.partial_fit(X,a,r)
+            self.partial_fit(X, a, r)
         else:
             for choice in range(n):
                 if self.assume_un:
@@ -423,7 +427,7 @@ class _ArrBSClassif:
                 if n_pos == 0:
                     self.algos[choice] =_ZeroPredictor()
                     continue
-                if (n_pos == yclass.shape[0]):
+                if n_pos == yclass.shape[0]:
                     self.algos[choice] = _OnePredictor()
                     continue
 
@@ -433,9 +437,9 @@ class _ArrBSClassif:
                     xsample = xclass[ix_take, :]
                     ysample = yclass[ix_take]
                     nclass = ysample.sum()
-                    if nclass == ysample.shape[0]:
+                    if (nclass == ysample.shape[0]) : and not self.partialfit
                         self.algos[choice][sample] = _OnePredictor()
-                    elif ysample.sum() > 0:
+                    elif (ysample.sum() > 0) or self.partialfit:
                         self.algos[choice][sample].fit(xsample, ysample)
                     else:
                         self.algos[choice][sample] = _ZeroPredictor()
@@ -598,7 +602,7 @@ class _OneVsRest:
         else:
             self.counters = None
             
-        if partialfit:
+        if self.partialfit:
             self.partial_fit(X, a, r)
         else:
             for choice in range(n):
