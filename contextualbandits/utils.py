@@ -377,10 +377,10 @@ class _ArrBSClassif:
     #TODO: refactor this out, make two classes, one for UCB and one for TS, which would then be embedded into _OneVsRest.
     def __init__(self,base,X,a,r,n,thr,alpha,beta,samples,smooth=False,assume_un=False,
                  partialfit=False,partial_method='gamma'):
-        if partialfit:
-            base = _modify_predict_method(base)
         if 'predict_proba' not in dir(base):
             base = _convert_decision_function(base)
+        if partialfit:
+            base = _modify_predict_method(base)
 
         self.base=base
         self.algos=[[deepcopy(base) for i in range(samples)] for j in range(n)]
@@ -575,10 +575,10 @@ class _ArrBSClassif:
 class _OneVsRest:
     def __init__(self, base, X, a, r, n, thr, alpha, beta, smooth=False, assume_un=False,
                  partialfit=False, force_fit=False, force_counters=False):
-        if partialfit:
-            base = _modify_predict_method(base)
         if 'predict_proba' not in dir(base):
             base = _convert_decision_function(base)
+        if partialfit:
+            base = _modify_predict_method(base)
         self.base = base
         self.algos = [deepcopy(base) for i in range(n)]
         self.n = n
