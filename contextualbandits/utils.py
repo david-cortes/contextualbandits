@@ -96,7 +96,7 @@ def _check_fit_input(X,a,r):
     r=_check_1d_inp(r)
     assert X.shape[0]==a.shape[0]
     assert X.shape[0]==r.shape[0]
-        
+
     return X,a,r
 
 def _check_X_input(X):
@@ -140,7 +140,7 @@ def _check_bay_inp(method, n_iter, n_samples):
     if isinstance(n_samples, float):
         n_samples = int(n_samples)
     assert isinstance(n_samples, int)
-    
+
     return n_iter, n_samples
 
 def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
@@ -274,94 +274,94 @@ class _BetaPredictor:
     def __init__(self, a, b):
         self.a = a
         self.b = b
-        
+
     def fit(self, X=None, y=None, sample_weight=None):
         pass
-    
+
     def predict_proba(self, X):
         preds = np.random.beta(self.a, self.b, size=X.shape[0]).reshape(-1,1)
         return np.c_[1 - preds, preds]
-    
+
     def decision_function(self, X):
         return np.random.beta(self.a, self.b, size=X.shape[0])
-    
+
     def predict(self, X):
         return (np.random.beta(self.a, self.b, size=X.shape[0])).astype('uint8')
-    
+
     def predict_avg(self, X):
         pred = self.decision_function(X)
         _apply_inverse_sigmoid(pred)
         return pred
-    
+
     def predict_rnd(self,X):
         return self.predict_avg(X)
-    
+
     def predict_ucb(self,X):
         return self.predict_avg(X)
-    
+
 class _ZeroPredictor:
     def __init__(self):
         pass
-        
+
     def fit(self,X=None,y=None, sample_weight=None):
         pass
-    
+
     def predict_proba(self,X):
         return np.c_[np.ones((X.shape[0],1)),np.zeros((X.shape[0],1))]
-    
+
     def decision_function(self,X):
         return np.zeros(X.shape[0])
-    
+
     def predict(self,X):
         return np.zeros(X.shape[0])
-    
+
     def predict_avg(self, X):
         return np.repeat(-1e10, X.shape[0])
-    
+
     def predict_rnd(self, X):
         return self.predict_avg(X)
-    
+
     def predict_ucb(self, X):
         return self.predict_avg(X)
-    
+
 class _OnePredictor:
     def __init__(self):
         pass
-        
+
     def fit(self, X=None, y=None, sample_weight=None):
         pass
-    
+
     def predict_proba(self, X):
         return np.c_[np.zeros((X.shape[0],1)),np.ones((X.shape[0],1))]
-    
+
     def decision_function(self, X):
         return np.ones(X.shape[0])
-    
+
     def predict(self, X):
         return np.ones(X.shape[0])
-    
+
     def predict_avg(self, X):
         return np.repeat(1e10, X.shape[0])
-    
+
     def predict_rnd(self, X):
         return self.predict_avg(X)
-    
+
     def predict_ucb(self, X):
         return self.predict_avg(X)
-    
+
 class _RandomPredictor:
     def __init__(self):
         pass
-    
+
     def fit(self, X=None, y=None, sample_weight=None):
         pass
-    
+
     def predict(self, X):
         return (np.random.random(size=X.shape[0]) >= .5).astype('uint8')
-    
+
     def predict_proba(self, X):
         return np.random.random(size=X.shape[0])
-    
+
     def predict_avg(self, X):
         pred = self.predict_proba(X)
         _apply_inverse_sigmoid(pred)
@@ -369,7 +369,7 @@ class _RandomPredictor:
 
     def predict_rnd(self, X):
         return self.predict_avg(X)
-    
+
     def predict_ucb(self, X):
         return self.predict_avg(X)
 
@@ -437,13 +437,13 @@ class _ArrBSClassif:
                     xsample = xclass[ix_take, :]
                     ysample = yclass[ix_take]
                     nclass = ysample.sum()
-                    if (nclass == ysample.shape[0]) : and not self.partialfit
+                    if (nclass == ysample.shape[0]) and not self.partialfit:
                         self.algos[choice][sample] = _OnePredictor()
                     elif (ysample.sum() > 0) or self.partialfit:
                         self.algos[choice][sample].fit(xsample, ysample)
                     else:
                         self.algos[choice][sample] = _ZeroPredictor()
-                    
+
     def partial_fit(self,X,a,r):
         for choice in range(self.n):
             if self.assume_un:
@@ -474,7 +474,7 @@ class _ArrBSClassif:
                 ## update the beta counters if needed
                 if self.thr > 0:
                     _update_beta_counters(self.beta_counters, yclass, choice, self.thr)
-    
+
     def score_avg(self,X):
         preds=np.zeros((X.shape[0], self.n))
         for choice in range(self.n):
@@ -502,12 +502,12 @@ class _ArrBSClassif:
                     preds[:, choice] += self.algos[choice][sample].decision_function(X)
                 else:
                     preds[:, choice] += self.algos[choice][sample].predict(X)
-                
+
             preds[:,choice] = preds[:,choice] / self.samples
-        
+
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
-    
+
     def score_max(self, X, perc=100):
         preds = np.zeros( (X.shape[0], self.n) )
         for choice in range(self.n):
@@ -535,15 +535,15 @@ class _ArrBSClassif:
                     arr_compare.append(self.algos[choice][sample].decision_function(X))
                 else:
                     arr_compare.append(self.algos[choice][sample].predict(X))
-                
+
             if perc == 100:
                 preds[:, choice] = np.vstack(arr_compare).max(axis=0)
             else:
                 preds[:, choice] = np.percentile(np.vstack(arr_compare), perc, axis=0)
-        
+
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
-    
+
     def score_rnd(self, X):
         preds = np.zeros( (X.shape[0], self.n) )
         for choice in range(self.n):
@@ -568,10 +568,10 @@ class _ArrBSClassif:
                 preds[:, choice] = self.algos[choice][sample_take].decision_function(X)
             else:
                 preds[:, choice] = self.algos[choice][sample_take].predict(X)
-        
+
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
-    
+
 class _OneVsRest:
     def __init__(self, base, X, a, r, n, thr, alpha, beta, smooth=False, assume_un=False,
                  partialfit=False, force_fit=False, force_counters=False):
@@ -601,7 +601,7 @@ class _OneVsRest:
             self.counters = np.zeros((1, n)) ##counters are row vectors to multiply them later with pred matrix
         else:
             self.counters = None
-            
+
         if self.partialfit:
             self.partial_fit(X, a, r)
         else:
@@ -637,7 +637,7 @@ class _OneVsRest:
                 if (self.force_fit and (thr > 0)) or (self.force_counters):
                     _update_beta_counters(self.beta_counters, yclass, choice, thr, self.force_counters)
 
-                
+
     def partial_fit(self, X, a, r):
         for choice in range(self.n):
             if self.assume_un:
@@ -660,7 +660,7 @@ class _OneVsRest:
             ## update the beta counters if needed
             if (self.thr > 0) or self.force_counters:
                 _update_beta_counters(self.beta_counters, yclass, choice, self.thr, self.force_counters)
-    
+
     def decision_function(self, X):
         preds = np.zeros((X.shape[0], self.n))
         for choice in range(self.n):
@@ -684,7 +684,7 @@ class _OneVsRest:
 
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
-    
+
     def predict_proba(self, X):
         preds = np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
@@ -704,12 +704,12 @@ class _OneVsRest:
                 preds[:, choice] = self.algos[choice].decision_function(X)
             else:
                 preds[:, choice] = self.algos[choice].predict(X)
-        
+
         _apply_smoothing(preds, self.smooth, self.counters)
         _apply_inverse_sigmoid(preds)
         _apply_softmax(preds)
         return preds
-    
+
     def predict_proba_raw(self,X):
         preds = np.zeros((X.shape[0],self.n))
         for choice in range(self.n):
@@ -726,10 +726,10 @@ class _OneVsRest:
                 preds[:,choice]=self.algos[choice].predict_proba(X)[:, 1]
             else:
                 raise ValueError("This requires a classifier with method 'predict_proba'.")
-                
+
         _apply_smoothing(preds, self.smooth, self.counters)
         return preds
-    
+
     def predict(self,X):
         return np.argmax(self.decision_function(X), axis=1)
 
@@ -750,8 +750,8 @@ class _OneVsRest:
 
     def get_n_neg(self, choice):
         return self.beta_counters[2, choice]
-        
-    
+
+
 class _BayesianLogisticRegression:
     def __init__(self, method='advi', niter=2000, nsamples=20, mode='ucb', perc=None):
         #TODO: reimplement with something faster than using PyMC3's black-box methods
@@ -788,7 +788,7 @@ class _BayesianLogisticRegression:
         self.intercept = coefs['Intercept'].values.reshape((-1,1)).copy()
         del self.coefs['Intercept']
         self.coefs = coefs.values.T
-        
+
     def _predict_all(self, X):
         pred_all = X.dot(self.coefs) + self.intercept
         _apply_sigmoid(pred_all)
@@ -802,7 +802,7 @@ class _BayesianLogisticRegression:
             pred = pred[:, np.random.randint(pred.shape[1])]
         else:
             pred = pred.mean(axis=1)
-        
+
         return np.c_[1 - pred, pred]
 
     def predict_proba(self, X):
@@ -811,15 +811,15 @@ class _BayesianLogisticRegression:
 class _LinUCBSingle:
     def __init__(self, alpha):
         self.alpha=alpha
-        
+
     def fit(self, X, y):
         if len(X.shape)==1:
             X=X.reshape(1,-1)
         self.Ainv=np.eye(X.shape[1])
         self.b=np.zeros((X.shape[1], 1))
-        
+
         self.partial_fit(X,y)
-    
+
     def partial_fit(self, X, y):
         if len(X.shape)==1:
             X=X.reshape(1,-1)
@@ -831,24 +831,24 @@ class _LinUCBSingle:
             x=X[i,:].reshape(-1,1)
             r=y[i]
             sumb+=r*x
-            
+
             self.Ainv -= np.linalg.multi_dot([self.Ainv, x, x.T, self.Ainv])/\
                             (1 + np.linalg.multi_dot([x.T, self.Ainv, x]))
-        
+
         self.b+=sumb
-    
+
     def predict(self, X, exploit=False):
         if len(X.shape)==1:
             X=X.reshape(1,-1)
-        
+
         pred=self.Ainv.dot(self.b).T.dot(X.T).reshape(-1)
-        
+
         if not exploit:
             return pred
-        
+
         for i in range(X.shape[0]):
             x=X[i,:].reshape(-1,1)
             cb=self.alpha*np.sqrt(np.linalg.multi_dot([x.T, self.Ainv, x]))
             pred[i]+=cb[0]
-        
+
         return pred
