@@ -4,7 +4,7 @@ from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
             _calculate_beta_prior, _BayesianLogisticRegression,\
             _check_bools, _LinUCBSingle, _modify_predict_method, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
-            _check_bay_inp
+            _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid
 import warnings
 import pandas as pd, numpy as np
 
@@ -1473,6 +1473,11 @@ class SoftmaxExplorer:
     
     Selects an action according to probabilites determined by a softmax transformation
     on the scores from the decision function that predicts each class.
+
+    Note
+    ----
+    Will apply an inverse sigmoid transformations to the probabilities that come from the base algorithm
+    before applying the softmax function.
     
     
     Parameters
@@ -1486,6 +1491,12 @@ class SoftmaxExplorer:
             3) A 'predict' method outputting (n_samples,), values in [0,1], to which it will apply an inverse sigmoid function.
     nchoices : int
         Number of arms/labels to choose from.
+    multiplier : float or None
+        Number by which to multiply the outputs from the base algorithm before applying the softmax function
+        (i.e. will take softmax(yhat * multiplier)).
+    inflation_rate : float or None
+        Number by which to multiply the multipier rate after every prediction, i.e. after making
+        't' predictions, the multiplier will be 'multiplier_t = multiplier * inflation_rate^t'.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -1508,13 +1519,26 @@ class SoftmaxExplorer:
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False):
+    def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
+                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
         _check_constructor_input(base_algorithm,nchoices,batch_train)
         self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
         self.smoothing = _check_smoothing(smoothing)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
+
+        if multiplier is not None:
+            if isinstance(multiplier, int):
+                multiplier = float(multiplier)
+            assert multiplier > 0
+        else:
+            multiplier = None
+        if inflation_rate is not None:
+            if isinstance(inflation_rate, int):
+                inflation_rate = float(inflation_rate)
+            assert inflation_rate > 0
+        self.multiplier = multiplier
+        self.inflation_rate = inflation_rate
         
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
@@ -1616,19 +1640,25 @@ class SoftmaxExplorer:
             that the classifier gave to that class.
         """
         if exploit:
-            X=_check_X_input(X)
-            return self._oracles.predict(X)
-        pred=self.decision_function(X)
-        chosen=list()
+            X = _check_X_input(X)
+            return np.argmax(self._oracles.decision_function(X), axis=1)
+        pred = self.decision_function(X)
+        _apply_inverse_sigmoid(pred)
+        if self.multiplier is not None:
+            pred *= self.multiplier
+            if self.inflation_rate is not None:
+                self.multiplier *= self.inflation_rate ** pred.shape[0]
+        _apply_softmax(pred)
+        chosen = list()
         for p_arr in pred:
-            if np.sum(p_arr)!=1.0:
-                p_arr=p_arr/np.sum(p_arr)
+            if np.sum(p_arr) != 1.0: #floating point arithmetic issues
+                p_arr = p_arr / np.sum(p_arr)
             chosen.append(np.random.choice(self.nchoices, p=p_arr))
         if not output_score:
             return np.array(chosen)
         else:
-            return np.c_[np.array(chosen).reshape(-1,1),\
-                         pred[np.arange(pred.shape[0]),np.array(chosen)].reshape(-1,1)]
+            return np.c_[np.array(chosen).reshape((-1,1)),\
+                         pred[np.arange(pred.shape[0]),np.array(chosen)].reshape((-1,1))]
 
 
 class LinUCB:
