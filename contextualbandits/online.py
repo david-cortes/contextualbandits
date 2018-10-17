@@ -2,7 +2,7 @@ from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
             _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
             _calculate_beta_prior, _BayesianLogisticRegression,\
-            _check_bools, _LinUCBSingle, _modify_predict_method, _check_active_inp, \
+            _check_bools, _LinUCBnTSSingle, _modify_predict_method, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid
 import warnings
@@ -812,7 +812,9 @@ class AdaptiveGreedy:
         will be forced to 'threshold'.
     initial_thr : str 'autho' or float (0,1)
         Initial threshold for the prediction below which a random action is taken.
-        If set to 'auto', will be calculated as initial_thr = 1.5/nchoices
+        If set to 'auto', will be calculated as initial_thr = 1.5/nchoices.
+        Note that if 'base_algorithm' has a 'decision_function' method, it will first apply a sigmoid function to the
+        output, and then compare it to the threshold, so the threshold should lie between zero and one.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -1047,7 +1049,6 @@ class AdaptiveGreedy:
         pred_max = pred_proba.max(axis=1)
         pred = np.argmax(pred_proba, axis=1)
         set_greedy = pred_max <= self.thr
-        # print("number falling below thr: ", set_greedy.sum())
         if set_greedy.sum() > 0:
             self._choose_greedy(set_greedy, X, pred, pred_proba)
         return pred, pred_max
@@ -1668,7 +1669,7 @@ class LinUCB:
     Note
     ----
     The formula here is implemented in a loop per observation for both fitting and predicting.
-    The A matrix in the formulas are not inverted after each updte, but rather, only their inverse is stored
+    The A matrix in the formulas are not inverted after each update, but rather, only their inverse is stored
     and is updated after each observation using the Sherman-Morrison formula.
     Thus, updating is quite fast, but there is no speed-up in doing batch updates.
     
@@ -1690,7 +1691,7 @@ class LinUCB:
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.alpha = alpha
         self.nchoices = nchoices
-        self._oracles = [_LinUCBSingle(self.alpha) for n in range(nchoices)]
+        self._oracles = [_LinUCBnTSSingle(self.alpha) for n in range(nchoices)]
     
     def fit(self, X, a, r):
         """"
@@ -1712,11 +1713,11 @@ class LinUCB:
         self : obj
             Copy of this same object
         """
-        X,a,r=_check_fit_input(X,a,r)
+        X, a, r = _check_fit_input(X, a, r)
         self.ndim = X.shape[1]
         for n in range(self.nchoices):
-            this_action=a==n
-            self._oracles[n].fit(X[this_action,:],r[this_action].astype('float64'))
+            this_action = a == n
+            self._oracles[n].fit(X[this_action,:], r[this_action].astype('float64'))
 
         return self
                 
@@ -1738,9 +1739,9 @@ class LinUCB:
         self : obj
             Copy of this same object
         """
-        X,a,r=_check_fit_input(X,a,r)
+        X, a, r = _check_fit_input(X, a, r)
         for n in range(self.nchoices):
-            this_action=a==n
+            this_action = a == n
             self._oracles[n].partial_fit(X[this_action,:], r[this_action].astype('float64'))
             
         return self
@@ -1762,11 +1763,48 @@ class LinUCB:
         pred : array (n_samples,)
             Actions chosen by the policy.
         """
-        X=_check_X_input(X)
-        pred=np.zeros((X.shape[0],self.nchoices))
+        X = _check_X_input(X)
+        pred = np.zeros((X.shape[0], self.nchoices))
         for choice in range(self.nchoices):
-            pred[:,choice]=self._oracles[choice].predict(X)
+            pred[:, choice] = self._oracles[choice].predict(X)
         return np.argmax(pred, axis=1)
+
+
+class LinTS(LinUCB):
+    """
+    Linear Thompson Sampling
+    
+    Note
+    ----
+    The formula here is implemented in a loop per observation for both fitting and predicting.
+    The B matrix in the formulas are not inverted after each update, but rather, only their inverse is stored
+    and is updated after each observation using the Sherman-Morrison formula.
+    Thus, updating is quite fast, but there is no speed-up in doing batch updates.
+
+    Note
+    ----
+    This class has the exact same API as LinUCB, in case it doesn't show in the docs, with the only difference
+    being that 'alpha' is renamed to 'v_sq' to be in line with the reference paper.
+    
+    Parameters
+    ----------
+    nchoices : int
+        Number of arms/labels to choose from.
+    v_sq : float
+        Parameter by which to multiply the covariance matrix (more means higher variance).
+    
+    References
+    ----------
+    [1] Thompson Sampling for Contextual Bandits with Linear Payoffs (2013)
+    """
+    def __init__(self, nchoices, v_sq=1.0):
+        if isinstance(v_sq, int):
+            v_sq = float(v_sq)
+        assert isinstance(v_sq, float)
+        _check_constructor_input(_ZeroPredictor(), nchoices)
+        self.v_sq = v_sq
+        self.nchoices = nchoices
+        self._oracles = [_LinUCBnTSSingle(self.v_sq, ts=True) for n in range(nchoices)]
 
 class BayesianUCB:
     """

@@ -73,16 +73,17 @@ Implementations in this package include:
 
 Online:
 * LinUCB (see [1] and [10]) 
+* Linear Thompson Sampling (see [3])
 
 Adaptations from multi-armed bandits strategies:
 * Upper-confidence Bound (see [5] and [2])
-* Thompson Sampling (see [2] and [3])
+* Thompson Sampling (see [2])
 * Epsilon Greedy (see [6] and [5])
 * Adaptive Greedy (see [4])
 * Explore-Then-Exploit
 
 Other:
-* Exploration based on active learning 
+* Exploration based on active learning
 
 Off-policy:
 * Offset Tree (see [7])

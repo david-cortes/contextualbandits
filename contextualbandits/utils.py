@@ -808,47 +808,57 @@ class _BayesianLogisticRegression:
     def predict_proba(self, X):
         pred = self._predict_proba()
 
-class _LinUCBSingle:
-    def __init__(self, alpha):
-        self.alpha=alpha
+def _sherman_morrison_update(Ainv, x):
+    ## x should have shape (n, 1)
+    Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1 + np.linalg.multi_dot([x.T, Ainv, x]))
+
+class _LinUCBnTSSingle:
+    def __init__(self, alpha, ts=False):
+        self.alpha = alpha
+        self.ts = ts
 
     def fit(self, X, y):
-        if len(X.shape)==1:
-            X=X.reshape(1,-1)
-        self.Ainv=np.eye(X.shape[1])
-        self.b=np.zeros((X.shape[1], 1))
+        if len(X.shape) == 1:
+            X = X.reshape((1,-1))
+        self.Ainv = np.eye(X.shape[1])
+        self.b = np.zeros((X.shape[1], 1))
 
         self.partial_fit(X,y)
 
     def partial_fit(self, X, y):
-        if len(X.shape)==1:
-            X=X.reshape(1,-1)
+        if len(X.shape) == 1:
+            X = X.reshape((1,-1))
         if 'Ainv' not in dir(self):
-            self.Ainv=np.eye(X.shape[1])
-            self.b=np.zeros((X.shape[1], 1))
-        sumb=np.zeros((X.shape[1], 1))
+            self.Ainv = np.eye(X.shape[1])
+            self.b = np.zeros((X.shape[1], 1))
+        sumb = np.zeros((X.shape[1], 1))
         for i in range(X.shape[0]):
-            x=X[i,:].reshape(-1,1)
-            r=y[i]
-            sumb+=r*x
+            x = X[i,:].reshape((-1,1))
+            r = y[i]
+            sumb += r * x
+            _sherman_morrison_update(Ainv, x)
 
-            self.Ainv -= np.linalg.multi_dot([self.Ainv, x, x.T, self.Ainv])/\
-                            (1 + np.linalg.multi_dot([x.T, self.Ainv, x]))
-
-        self.b+=sumb
+        self.b += sumb
 
     def predict(self, X, exploit=False):
-        if len(X.shape)==1:
-            X=X.reshape(1,-1)
+        if len(X.shape) == 1:
+            X = X.reshape((1,-1))
 
-        pred=self.Ainv.dot(self.b).T.dot(X.T).reshape(-1)
+        if self.ts:
+            mu = (self.Ainv.dot(self.b)).reshape(-1)
+            if not exploit:
+                mu = np.random.multivariate_normal(mu, self.alpha * self.Ainv)
+            return X.dot(mu).reshape(-1)
 
-        if not exploit:
-            return pred
+        else:
+            pred = self.Ainv.dot(self.b).T.dot(X.T).reshape(-1)
 
-        for i in range(X.shape[0]):
-            x=X[i,:].reshape(-1,1)
-            cb=self.alpha*np.sqrt(np.linalg.multi_dot([x.T, self.Ainv, x]))
-            pred[i]+=cb[0]
+            if not exploit:
+                return pred
+
+            for i in range(X.shape[0]):
+                x = X[i,:].reshape((-1,1))
+                cb = self.alpha * np.sqrt(np.linalg.multi_dot([x.T, self.Ainv, x]))
+                pred[i] += cb[0]
 
         return pred
