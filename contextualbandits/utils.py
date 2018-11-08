@@ -59,7 +59,7 @@ def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
 
 def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
-    assert nchoices > 2
+    assert nchoices >= 2
     assert isinstance(nchoices, int)
     assert ('fit' in dir(base_algorithm)) and ('predict' in dir(base_algorithm))
     if batch_train:
