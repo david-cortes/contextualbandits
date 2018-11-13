@@ -63,6 +63,10 @@ class BootstrappedUCB:
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
+
+    References
+    ----------
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
         """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
                  beta_prior='auto', smoothing=None, batch_train=False,
@@ -252,7 +256,8 @@ class BootstrappedTS:
     
     References
     ----------
-    [1] An empirical evaluation of thompson sampling (2011)
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [2] An empirical evaluation of thompson sampling (2011)
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False, batch_sample_method='gamma'):
@@ -422,6 +427,10 @@ class SeparateClassifiers:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+
+    References
+    ----------
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
                  batch_train=False, assume_unique_reward=False):
@@ -627,7 +636,8 @@ class EpsilonGreedy:
     
     References
     ----------
-    [1] The k-armed dueling bandits problem (2010)
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [2] The k-armed dueling bandits problem (2010)
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
                  beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
@@ -860,6 +870,7 @@ class AdaptiveGreedy:
     References
     ----------
     [1] Mortal multi-armed bandits (2009)
+    [2] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
     
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
@@ -1129,6 +1140,10 @@ class ExploreFirst:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+
+    References
+    ----------
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
                  beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False):
@@ -1336,6 +1351,10 @@ class ActiveExplorer:
         fit to that observation too, having negative label.
     random_seed : None or int
         Random state or seed to pass to the solver.
+
+    References
+    ----------
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
@@ -1519,6 +1538,10 @@ class SoftmaxExplorer:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+
+    References
+    ----------
+    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
                  beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
