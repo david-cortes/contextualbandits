@@ -111,6 +111,19 @@ Most of the methods here can work with streaming data by fitting them to the dat
 
 ![image](plots/bibtex_results.png "bibtex_simulation")
 
+## Serializing (pickling) objects
+
+Using `pickle` to serialize objects from this library is likely to fail. Use `dill` instead, which has the same syntax as pickle, e.g.:
+```python
+import dill
+from sklearn.linear_model import SGDClassifier
+from contextualbandits.online import BootstrappedUCB
+
+m = BootstrappedUCB(SGDClassifier(loss="log"), nchoices = 5, batch_train = True)
+dill.dump(m, open("saved_ucb_model.dill", "wb"))
+m = dill.load(open("saved_ucb_model.dill", "rb"))
+```
+
 ## Some comments
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
