@@ -11,7 +11,7 @@ setup(
    'costsensitive',
    'pymc3'
 ],
-  version = '0.1.5.1',
+  version = '0.1.5.2',
   description = 'Python Implementations of Algorithms for Contextual Bandits',
   author = 'David Cortes',
   author_email = 'david.cortes.rivera@gmail.com',

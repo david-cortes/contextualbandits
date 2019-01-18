@@ -8,43 +8,34 @@ def _convert_decision_function(classifier):
     return classifier
 
 def _modify_predict_method(classifier):
-    classifier.predict_old=deepcopy(classifier.predict)
-    classifier.predict=types.MethodType(_robust_predict, classifier)
+    classifier.predict_old = deepcopy(classifier.predict)
+    classifier.predict = types.MethodType(_robust_predict, classifier)
 
     if 'predict_proba' in dir(classifier):
         # TODO: once scikit-learn's issue 10938 is solved, make like the others
-        classifier.predict_proba_new=types.MethodType(_robust_predict_proba, classifier)
+        classifier.predict_proba_new = types.MethodType(_robust_predict_proba, classifier)
     if 'decision_function' in dir(classifier):
-        classifier.decision_function_old=classifier.decision_function
-        classifier.decision_function=types.MethodType(_robust_decision_function, classifier)
+        classifier.decision_function_old = classifier.decision_function
+        classifier.decision_function = types.MethodType(_robust_decision_function, classifier)
 
     return classifier
 
 def _robust_predict(self, X):
-    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
-        try:
-            return self.predict_old(X)
-        except:
-            return np.zeros(X.shape[0])
-    else:
+    try:
+        return self.predict_old(X)
+    except:
         return np.zeros(X.shape[0])
 
 def _robust_predict_proba(self, X):
-    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
-        try:
-            return self.predict_proba(X)
-        except:
-            return np.zeros((X.shape[0],2))
-    else:
+    try:
+        return self.predict_proba(X)
+    except:
         return np.zeros((X.shape[0],2))
 
 def _robust_decision_function(self, X):
-    if ('coef_' in dir(self)) or ('coefs_' in dir(self)):
-        try:
-            return self.decision_function_old(X)
-        except:
-            return np.zeros(X.shape[0])
-    else:
+    try:
+        return self.decision_function_old(X)
+    except:
         return np.zeros(X.shape[0])
 
 def _converted_decision_function(self, X):
