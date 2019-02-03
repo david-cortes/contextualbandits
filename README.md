@@ -3,7 +3,7 @@
 
 This Python package contains implementations of methods from different papers dealing with the contextual bandit problem, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
-The implementations of online algorithms are all described in the paper _Adapting multi-armed bandits policies to contextual bandits scenarios_:
+The implementations details of the online algorithms here are all described in the paper _Adapting multi-armed bandits policies to contextual bandits scenarios_:
 [https://arxiv.org/abs/1811.04383](https://arxiv.org/abs/1811.04383)
 
 Paper can be cited as
@@ -81,7 +81,6 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 Implementations in this package include:
  
-
 Online:
 * LinUCB (see [2] and [11]) 
 * Linear Thompson Sampling (see [4])
@@ -103,13 +102,12 @@ Off-policy:
 Evaluation:
 * Rejection Sampling (see [2])
 * Doubly-Robust Policy Evaluation (see [9])
- 
 
-Some of the policies here such as `AdaptiveGreedy` haven't been yet evaluated or analyzed in any research papers for the scenario of contextual bandits though, and there might be better ways to convert the corresponding multi-armed bandits strategies to contextual bandits strategies than how it was done here.
-
-Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details).
+Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details). Also included is a basic stochastic logistic regression classifier (`StochasticLogisticRegression`) which can use AdaGrad or RMSProp as optimization algorithm instead of gradient descent, to go along with the online metaheuristics from here.
 
 ![image](plots/bibtex_results.png "bibtex_simulation")
+
+![image](plots/offpolicy.png "bibtex_offpolicy")
 
 ## Serializing (pickling) objects
 
@@ -130,7 +128,7 @@ Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (
 
 This package assumes that the binary classification algorithms used have probabilistic outputs, ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation. Under some of the online algorithms or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
-Be aware that this is a research-oriented package and it has not been optimized for speed, nor does it use parallelism across arms.
+Be aware that this is a research-oriented package and it has not been optimized for speed.
 
 ## References
 

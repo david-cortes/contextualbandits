@@ -39,7 +39,8 @@ def evaluateRejectionSampling(policy, X, a, r, online=False, start_point_online=
         
     References
     ----------
-    [1] A contextual-bandit approach to personalized news article recommendation (2010)
+    [1] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
+        Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
     X,a,r=_check_fit_input(X,a,r)
     if start_point_online=='random':
@@ -155,7 +156,8 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     
     References
     ----------
-    [1] Doubly robust policy evaluation and learning (2011)
+    [1] Dudík, Miroslav, John Langford, and Lihong Li. "Doubly robust policy evaluation and learning."
+        arXiv preprint arXiv:1103.4601 (2011).
     """
     X,a,r=_check_fit_input(X,a,r)
     p=_check_1d_inp(p)

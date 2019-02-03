@@ -1,14 +1,166 @@
+import pandas as pd, numpy as np, warnings
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
-            _BetaPredictor, _ZeroPredictor, _OnePredictor, _ArrBSClassif, _OneVsRest,\
+            _BetaPredictor, _ZeroPredictor, _OnePredictor, _OneVsRest,\
+            _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
+            _BootstrappedClassifier_w_decision_function, _check_njobs, \
             _calculate_beta_prior, _BayesianLogisticRegression,\
-            _check_bools, _LinUCBnTSSingle, _modify_predict_method, _check_active_inp, \
+            _check_bools, _LinUCBnTSSingle, _add_method_predict_robust, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid
-import warnings
-import pandas as pd, numpy as np
+from joblib import Parallel, delayed
 
-class BootstrappedUCB:
+class _BasePolicy:
+    def __init__(self):
+        pass
+
+    def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices, batch_train, assume_unique_reward, assign_algo=True):
+        _check_constructor_input(base_algorithm, nchoices, batch_train)
+        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
+        self.smoothing = _check_smoothing(smoothing)
+        self.njobs = _check_njobs(njobs)
+        self.nchoices = nchoices
+        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
+        if assign_algo:
+            self.base_algorithm = base_algorithm
+
+    def fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        X, a, r = _check_fit_input(X, a, r)
+        self._oracles = _OneVsRest(self.base_algorithm,
+                                   X, a, r,
+                                   self.nchoices,
+                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
+                                   self.smoothing,
+                                   self.assume_unique_reward,
+                                   self.batch_train,
+                                   njobs = self.njobs)
+        return self
+    
+    def partial_fit(self, X, a, r):
+        """
+        Fits the base algorithm (one per class) to partially labeled data in batches.
+        
+        Note
+        ----
+        In order to use this method, the base classifier must have a 'partial_fit' method,
+        such as 'sklearn.linear_model.SGDClassifier'.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Matrix of covariates for the available data.
+        a : array (n_samples), int type
+            Arms or actions that were chosen for each observations.
+        r : array (n_samples), {0,1}
+            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        if '_oracles' in dir(self):
+            X, a, r =_check_fit_input(X, a, r)
+            self._oracles.partial_fit(X, a, r)
+            return self
+        else:
+            return self.fit(X, a, r)
+    
+    def decision_function(self, X):
+        """
+        Get the scores for each arm following this policy's action-choosing criteria.
+
+        Note
+        ----
+        For 'ExploreFirst', the results from this method will not actually follow the policy in
+        assigning random numbers during the exploration phase.
+        Same for 'AdaptiveGreedy' - it won't make random choices according to the policy.
+        
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            Data for which to obtain decision function scores for each arm.
+        
+        Returns
+        -------
+        scores : array (n_samples, n_choices)
+            Scores following this policy for each arm.
+        """
+        X = _check_X_input(X)
+        return self._oracles.decision_function(X)
+
+class _BasePolicyWithExploit(_BasePolicy):
+    def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method, nsamples, njobs_samples, percentile):
+        assert (batch_sample_method == 'gamma') or (batch_sample_method == 'poisson')
+        assert isinstance(nsamples, int)
+        assert nsamples >= 2
+        self.batch_sample_method = batch_sample_method
+        self.nsamples = nsamples
+        self.njobs_samples = _check_njobs(njobs_samples)
+        if "predict_proba" in dir(base_algorithm):
+            self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                )
+        elif "decision_function" in dir(base_algorithm):
+            self.base_algorithm = _BootstrappedClassifier_w_decision_function(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                )
+        else:
+            self.base_algorithm = _BootstrappedClassifier_w_predict(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                )
+
+    def predict(self, X, exploit = False, output_score = False):
+        """
+        Selects actions according to this policy for new data.
+        
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            New observations for which to choose an action according to this policy.
+        output_score : bool
+            Whether to output the score that this method predicted, in case it is desired to use
+            it with this pakckage's offpolicy and evaluation modules.
+            
+        Returns
+        -------
+        pred : array (n_samples,) or (n_samples, 2)
+            Actions chosen by the policy. If passing output_score=True, it will be an array
+            with the first column indicating the action and the second one indicating the score
+            that the classifier gave to that class.
+        """
+        if exploit:
+            scores = self.exploit(X)
+        else:
+            scores = self.decision_function(X)
+        pred = np.argmax(scores, axis = 1)
+        if not output_score:
+            return pred
+        else:
+            score_max = np.max(scores, axis=1).reshape((-1, 1))
+            return np.c_[pred.reshape((-1, 1)), score_max]
+
+class BootstrappedUCB(_BasePolicyWithExploit):
     """
     Bootstrapped Upper Confidence Bound
 
@@ -63,146 +215,34 @@ class BootstrappedUCB:
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
+    njobs_arms : int or None
+        Number of parallel jobs to run (for dividing work across arms). If passing None will set it to 1.
+        If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
+        parallelized, this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both. The total number of parallel jobs will be njobs_arms * njobs_samples.
+    njobs_samples : int or None
+        Number of parallel jobs to run (for dividing work across samples within one arm). If passing None
+        will set it to 1. If passing -1 will set it to the number of CPU cores. The total number of parallel
+        jobs will be njobs_arms * njobs_samples.
 
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] “Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
         """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
                  beta_prior='auto', smoothing=None, batch_train=False,
-                 assume_unique_reward=False, batch_sample_method='gamma'):
-        _check_constructor_input(base_algorithm, nchoices, batch_train)
+                 assume_unique_reward=False, batch_sample_method='gamma',
+                 njobs_arms=1, njobs_samples=-1):
         assert (percentile >= 0) and (percentile <= 100)
-        assert (batch_sample_method == 'gamma') or (batch_sample_method == 'poisson')
-        
-        self.base_algorithm = base_algorithm
-        if beta_prior=='auto':
+        if beta_prior == 'auto':
             self.beta_prior = ((5/nchoices, 4), 2)
-        else:
-            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.nchoices = nchoices
-        self.nsamples = nsamples
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms, nchoices,
+                                batch_train, assume_unique_reward, assign_algo=False)
         self.percentile = percentile
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
-        self.batch_sample_method = batch_sample_method
-    
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per sample per class) to partially labeled data,
-        with the actions having been determined by this same policy.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-        
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_ArrBSClassif(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.nsamples,
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train,
-                                   self.batch_sample_method)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per sample per class) to partially labeled data in batches,
-        with the actions having been determined by this same policy.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
+        self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, self.percentile)
 
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def decision_function(self, X):
-        """
-        Get the scores for each arm following this policy's action-choosing criteria.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
-        return self._oracles.score_max(X,perc=self.percentile)
-    
-    def predict(self, X, exploit=False, output_score=False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-        output_score : bool
-            Whether to output the score that this method predicted, in case it is desired to use
-            it with this package's offpolicy and evaluation modules.
-            
-        Returns
-        -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
-        """
-        if exploit:
-            X = _check_X_input(X)
-            pred = self._oracles.score_avg(X)
-        else:
-            pred = self.decision_function(X)
-            
-        if not output_score:
-            return np.argmax(pred, axis=1).reshape(-1)
-        else:
-            score_max = pred.max(axis=1).reshape(-1,1)
-            pred = np.argmax(pred, axis=1).reshape(-1,1)
-            return np.c_[pred, score_max]
-
-class BootstrappedTS:
+class BootstrappedTS(_BasePolicyWithExploit):
     """
     Bootstrapped Thompson Sampling
     
@@ -253,143 +293,31 @@ class BootstrappedTS:
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
+    njobs_arms : int or None
+        Number of parallel jobs to run (for dividing work across arms). If passing None will set it to 1.
+        If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
+        parallelized, this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both. The total number of parallel jobs will be njobs_arms * njobs_samples.
+    njobs_samples : int or None
+        Number of parallel jobs to run (for dividing work across samples within one arm). If passing None
+        will set it to 1. If passing -1 will set it to the number of CPU cores. The total number of parallel
+        jobs will be njobs_arms * njobs_samples.
     
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
-    [2] An empirical evaluation of thompson sampling (2011)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
+    [2] Chapelle, Olivier, and Lihong Li. "An empirical evaluation of thompson sampling."
+        Advances in neural information processing systems. 2011.
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False, batch_sample_method='gamma'):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        assert isinstance(nsamples, int)
-        assert nsamples>=2
-        assert (batch_sample_method=='gamma') or (batch_sample_method=='poisson')
-        
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
-        self.nsamples=nsamples
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
-        self.batch_sample_method = batch_sample_method
-    
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per sample per class) to partially labeled data,
-        with the actions having been determined by this same policy.
+                 batch_train=False, assume_unique_reward=False, batch_sample_method='gamma',
+                 njobs_arms=1, njobs_samples=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms, nchoices,
+                                batch_train, assume_unique_reward, assign_algo=False)
+        self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, None)
 
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_ArrBSClassif(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.nsamples,
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train,
-                                   self.batch_sample_method)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches,
-        with the actions having been determined by this same policy.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def decision_function(self, X):
-        """
-        Get the scores for each arm following this policy's action-choosing criteria.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
-        return self._oracles.score_rnd(X)
-    
-    def predict(self, X, exploit=False, output_score=False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-        output_score : bool
-            Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
-            
-        Returns
-        -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
-        """
-        if exploit:
-            X = _check_X_input(X)
-            pred = self._oracles.score_avg(X)
-        else:
-            pred = self.decision_function(X)
-        
-        if not output_score:
-            return np.argmax(pred, axis=1).reshape(-1)
-        else:
-            score_max = pred.max(axis=1).reshape(-1,1)
-            pred = np.argmax(pred, axis=1).reshape(-1,1)
-            return np.c_[pred, score_max]
-
-class SeparateClassifiers:
+class SeparateClassifiers(_BasePolicy):
     """
     Separate Clasifiers per arm
     
@@ -427,82 +355,26 @@ class SeparateClassifiers:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
 
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
-                 batch_train=False, assume_unique_reward=False):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
+                 batch_train=False, assume_unique_reward=False, njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward)
     
-    def fit(self, X, a, r):
+    def decision_function_std(self, X):
         """
-        Fits the base algorithm (one per class) to partially labeled data.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def decision_function(self,X):
-        """
-        Get the scores for each arm following this policy's action-choosing criteria.
+        Get the predicted "probabilities" from each arm from the classifier that predicts it,
+        standardized to sum up to 1 (note that these are no longer probabilities).
         
         Parameters
         ----------
@@ -514,29 +386,7 @@ class SeparateClassifiers:
         scores : array (n_samples, n_choices)
             Scores following this policy for each arm.
         """
-        X=_check_X_input(X)
-        return self._oracles.decision_function(X)
-    
-    def decision_function_std(self,X):
-        """
-        Get the predicted probabilities from each arm from the classifier that predicts it,
-        standardized to sum up to 1.
-        
-        Note
-        ----
-        Classifiers are all fit on different data, so the probabilities will not add up to 1.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
+        X = _check_X_input(X)
         return self._oracles.predict_proba(X)
     
     def predict_proba_separate(self,X):
@@ -557,10 +407,10 @@ class SeparateClassifiers:
         scores : array (n_samples, n_choices)
             Scores following this policy for each arm.
         """
-        X=_check_X_input(X)
+        X = _check_X_input(X)
         return self._oracles.predict_proba_raw(X)
     
-    def predict(self, X, exploit=False, output_score=False):
+    def predict(self, X, output_score = False):
         """
         Selects actions according to this policy for new data.
         
@@ -568,9 +418,6 @@ class SeparateClassifiers:
         ----------
         X : array (n_samples, n_features)
             New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.
@@ -583,14 +430,14 @@ class SeparateClassifiers:
             that the classifier gave to that class.
         """
         scores = self.decision_function(X)
-        pred = np.argmax(scores, axis=1)
+        pred = np.argmax(scores, axis = 1)
         if not output_score:
             return pred
         else:
-            score_max = np.max(scores, axis=1).reshape(-1,1)
-            return np.c_[pred.reshape(-1,1), score_max]
+            score_max = np.max(scores, axis=1).reshape((-1, 1))
+            return np.c_[pred.reshape((-1, 1)), score_max]
 
-class EpsilonGreedy:
+class EpsilonGreedy(_BasePolicy):
     """
     Epsilon Greedy
     
@@ -633,111 +480,32 @@ class EpsilonGreedy:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
     
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
-    [2] The k-armed dueling bandits problem (2010)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
+    [2] Yue, Yisong, et al. "The k-armed dueling bandits problem."
+        Journal of Computer and System Sciences 78.5 (2012): 1538-1556.
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
-                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
-        
+                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward)
         assert (explore_prob>0) and (explore_prob<1)
         if decay is not None:
             assert (decay>0) and (decay<1)
-            if decay<=.99:
+            if decay <= .99:
                 warnings.warn("Warning: 'EpsilonGreedy' has a very high decay rate.")
         self.explore_prob = explore_prob
         self.decay = decay
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def decision_function(self,X):
-        """
-        Get the decision function for each arm from the classifier that predicts it.
-        
-        Note
-        ----
-        This is quite different from the decision_function of the other policies, as it
-        doesn't follow the policy in assigning random choices with some probability.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
-        return self._oracles.decision_function(X)
-    
-    def predict(self, X, exploit=False, output_score=False):
+    def predict(self, X, exploit = False, output_score = False):
         """
         Selects actions according to this policy for new data.
         
@@ -760,27 +528,27 @@ class EpsilonGreedy:
             that the classifier gave to that class.
         """
         scores = self.decision_function(X)
-        pred = np.argmax(scores, axis=1)
+        pred = np.argmax(scores, axis = 1)
         if not exploit:
             ix_change_rnd = (np.random.random(size =  X.shape[0]) <= self.explore_prob)
-            pred[ix_change_rnd] = np.random.randint(self.nchoices, size=ix_change_rnd.sum())
+            pred[ix_change_rnd] = np.random.randint(self.nchoices, size = ix_change_rnd.sum())
         if self.decay is not None:
-            self.explore_prob *= self.decay**X.shape[0]
+            self.explore_prob *= self.decay ** X.shape[0]
         if not output_score:
             return pred
         else:
-            score_max = np.max(scores, axis=1).reshape(-1,1)
+            score_max = np.max(scores, axis = 1).reshape((-1, 1))
             score_max[ix_change_rnd] = 1 / self.nchoices
-            return np.c_[pred.reshape(-1,1), score_max]
+            return np.c_[pred.reshape((-1, 1)), score_max]
 
 
-class AdaptiveGreedy:
+class AdaptiveGreedy(_BasePolicy):
     """
     Adaptive Greedy
     
     Takes the action with highest estimated reward, unless that estimation falls below a certain
-    threshold, in which case it takes a random action or some other action according to
-    an active learning heuristic.
+    threshold, in which case it takes a an action either at random or according to an active learning
+    heuristic.
 
     Note
     ----
@@ -866,22 +634,26 @@ class AdaptiveGreedy:
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
         If passing 'zero', it will output zero whenever models have not been fitted.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
     
     References
     ----------
-    [1] Mortal multi-armed bandits (2009)
-    [2] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] Chakrabarti, Deepayan, et al. "Mortal multi-armed bandits."
+        Advances in neural information processing systems. 2009.
+    [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
     
     """
-    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30, decay=0.9998,
+    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35, decay=0.9998,
                  decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False,
-                 active_choice=None, f_grad_norm='auto', case_one_class='auto'):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
+                 active_choice=None, f_grad_norm='auto', case_one_class='auto', njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward)
         
         assert isinstance(window_size, int)
         if percentile is not None:
@@ -905,7 +677,6 @@ class AdaptiveGreedy:
         if (decay_type == 'percentile') and (percentile is None):
             decay = 1
         self.decay = decay
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
 
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
@@ -930,7 +701,7 @@ class AdaptiveGreedy:
         Returns
         -------
         self : obj
-            Copy of this same object
+            This object
         """
         X, a, r = _check_fit_input(X, a, r)
         self._oracles = _OneVsRest(self.base_algorithm,
@@ -941,40 +712,11 @@ class AdaptiveGreedy:
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    self._force_fit,
-                                   force_counters = self.active_choice is not None)
+                                   force_counters = self.active_choice is not None,
+                                   njobs = self.njobs)
         return self
     
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def predict(self, X, exploit=False):
+    def predict(self, X, exploit = False):
         """
         Selects actions according to this policy for new data.
         
@@ -1056,7 +798,7 @@ class AdaptiveGreedy:
                 raise ValueError("'decay_type' must be one of 'threshold' or 'percentile'")
 
     def _calc_preds(self, X):
-        pred_proba = self._oracles.predict_proba(X)
+        pred_proba = self._oracles.decision_function(X)
         pred_max = pred_proba.max(axis=1)
         pred = np.argmax(pred_proba, axis=1)
         set_greedy = pred_max <= self.thr
@@ -1074,32 +816,8 @@ class AdaptiveGreedy:
                     pred_all[set_greedy],
                     self.active_choice),
                 axis = 1)
-    
-    def decision_function(self, X):
-        """
-        Get the estimated probability for each arm from the classifier that predicts it.
-        
-        Note
-        ----
-        This is quite different from the decision_function of the other policies, as it
-        doesn't follow the policy in assigning random choices with some probability.
-        A sigmoid function is applyed to the decision_function of the classifier if it doesn't
-        have a predict_proba method.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
-        return self._oracles.predict_proba(X)
 
-class ExploreFirst:
+class ExploreFirst(_BasePolicy):
     """
     Explore First, a.k.a. Explore-Then-Exploit
     
@@ -1140,85 +858,28 @@ class ExploreFirst:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
 
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
-                 beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
+                 beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward)
         
         assert explore_rounds>0
         assert isinstance(explore_rounds, int)
         self.explore_rounds = explore_rounds
         self.explore_cnt = 0
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data with actions chosen by this same policy.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-    
-    def predict(self, X, exploit=False):
+    def predict(self, X, exploit = False):
         """
         Selects actions according to this policy for new data.
         
@@ -1260,31 +921,8 @@ class ExploreFirst:
                 return pred
         else:
             return self._oracles.predict(X)
-        
-    def decision_function(self, X):
-        """
-        Get the decision function for each arm from the classifier that predicts it.
-        
-        Note
-        ----
-        This is quite different from the decision_function of the other policies, as it
-        doesn't follow the policy in assigning random choices at the beginning with equal
-        probability all.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X=_check_X_input(X)
-        return self._oracles.predict_proba(X)
 
-class ActiveExplorer:
+class ActiveExplorer(_BasePolicy):
     """
     Active Explorer
     
@@ -1351,30 +989,32 @@ class ActiveExplorer:
         fit to that observation too, having negative label.
     random_seed : None or int
         Random state or seed to pass to the solver.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
 
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False, random_seed=None):
+                 batch_train=False, assume_unique_reward=False, random_seed=None, njobs=-1):
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
-        _check_constructor_input(base_algorithm, nchoices, batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward, assign_algo=False)
 
-        if batch_train:
-            base_algorithm = _modify_predict_method(base_algorithm)
+        if self.batch_train:
+            base_algorithm = _add_method_predict_robust(base_algorithm)
         self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
         
         assert isinstance(explore_prob, float)
         assert (explore_prob > 0) and (explore_prob < 1)
         self.explore_prob = explore_prob
         self.decay = decay
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
     
     def fit(self, X, a, r):
         """
@@ -1393,7 +1033,7 @@ class ActiveExplorer:
         Returns
         -------
         self : obj
-            Copy of this same object
+            This object
         """
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
@@ -1403,35 +1043,9 @@ class ActiveExplorer:
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    force_fit = self._force_fit,
-                                   force_counters = True)
+                                   force_counters = True,
+                                   njobs = self.njobs)
         return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits logistic regression (one per class) to partially labeled data in batches,
-        with actions chosen by this same policy.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
-            
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
         """
@@ -1487,7 +1101,7 @@ class ActiveExplorer:
 
         return pred
 
-class SoftmaxExplorer:
+class SoftmaxExplorer(_BasePolicy):
     """
     SoftMax Explorer
     
@@ -1538,18 +1152,21 @@ class SoftmaxExplorer:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both.
 
     References
     ----------
-    [1] “Adapting multi-armed bandits policies to contextual bandits scenarios (2018)
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+        arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
-                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False):
-        _check_constructor_input(base_algorithm,nchoices,batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        self.base_algorithm = base_algorithm
-        self.nchoices = nchoices
+                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, assume_unique_reward)
 
         if multiplier is not None:
             if isinstance(multiplier, int):
@@ -1563,66 +1180,6 @@ class SoftmaxExplorer:
             assert inflation_rate > 0
         self.multiplier = multiplier
         self.inflation_rate = inflation_rate
-        
-        self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
-    
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X,a,r=_check_fit_input(X,a,r)
-        self._oracles=_OneVsRest(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train)
-        return self
-    
-    def partial_fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data in batches.
-        
-        Note
-        ----
-        In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        if '_oracles' in dir(self):
-            X,a,r=_check_fit_input(X,a,r)
-            self._oracles.partial_fit(X,a,r)
-            return self
-        else:
-            return self.fit(X,a,r)
     
     def decision_function(self, X, output_score=False, apply_sigmoid_score=True):
         """
@@ -1638,7 +1195,7 @@ class SoftmaxExplorer:
         scores : array (n_samples, n_choices)
             Scores following this policy for each arm.
         """
-        X=_check_X_input(X)
+        X = _check_X_input(X)
         return self._oracles.predict_proba(X)
     
     def predict(self, X, exploit=False, output_score=False):
@@ -1702,16 +1259,23 @@ class LinUCB:
         Number of arms/labels to choose from.
     alpha : float
         Parameter to control the upper confidence bound (more is higher).
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
     
     References
     ----------
-    [1] A contextual-bandit approach to personalized news article recommendation (2010)
+    [1] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
+        Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
-    def __init__(self, nchoices, alpha=1.0):
+    def __init__(self, nchoices, alpha=1.0, njobs=1):
         if isinstance(alpha, int):
             alpha = float(alpha)
         assert isinstance(alpha, float)
         _check_constructor_input(_ZeroPredictor(), nchoices)
+        self.njobs = _check_njobs(njobs)
         self.alpha = alpha
         self.nchoices = nchoices
         self._oracles = [_LinUCBnTSSingle(self.alpha) for n in range(nchoices)]
@@ -1734,15 +1298,16 @@ class LinUCB:
         Returns
         -------
         self : obj
-            Copy of this same object
+            This object
         """
         X, a, r = _check_fit_input(X, a, r)
         self.ndim = X.shape[1]
-        for n in range(self.nchoices):
-            this_action = a == n
-            self._oracles[n].fit(X[this_action,:], r[this_action].astype('float64'))
-
+        Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.n))
         return self
+
+    def _fit_single(self, choice, X, a, r):
+        this_action = a == choice
+        self._oracles[n].fit(X[this_action,:], r[this_action].astype('float64'))
                 
     def partial_fit(self, X, a, r):
         """"
@@ -1760,7 +1325,7 @@ class LinUCB:
         Returns
         -------
         self : obj
-            Copy of this same object
+            This object
         """
         X, a, r = _check_fit_input(X, a, r)
         for n in range(self.nchoices):
@@ -1769,7 +1334,7 @@ class LinUCB:
             
         return self
     
-    def predict(self, X, exploit=False):
+    def predict(self, X, exploit=False, output_score=False):
         """
         Selects actions according to this policy for new data.
         
@@ -1780,17 +1345,28 @@ class LinUCB:
         exploit : bool
             Whether to make a prediction according to the policy, or to just choose the
             arm with the highest expected reward according to current models.
+        output_score : bool
+            Whether to output the score that this method predicted, in case it is desired to use
+            it with this pakckage's offpolicy and evaluation modules.
             
         Returns
         -------
-        pred : array (n_samples,)
-            Actions chosen by the policy.
+        pred : array (n_samples,) or (n_samples, 2)
+            Actions chosen by the policy. If passing output_score=True, it will be an array
+            with the first column indicating the action and the second one indicating the score
+            that the classifier gave to that class.
         """
         X = _check_X_input(X)
         pred = np.zeros((X.shape[0], self.nchoices))
         for choice in range(self.nchoices):
-            pred[:, choice] = self._oracles[choice].predict(X)
-        return np.argmax(pred, axis=1)
+            if exploit:
+                pred[:, choice] = self._oracles[choice].exploit(X)
+            else:
+                pred[:, choice] = self._oracles[choice].predict(X)
+        if output_score:
+            return np.c_[np.argmax(pred, axis=1), np.max(pred, axis=1)]
+        else:
+            return np.argmax(pred, axis=1)
 
 
 class LinTS(LinUCB):
@@ -1815,21 +1391,28 @@ class LinTS(LinUCB):
         Number of arms/labels to choose from.
     v_sq : float
         Parameter by which to multiply the covariance matrix (more means higher variance).
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
     
     References
     ----------
-    [1] Thompson Sampling for Contextual Bandits with Linear Payoffs (2013)
+    [1] Agrawal, Shipra, and Navin Goyal. "Thompson sampling for contextual bandits with linear payoffs."
+        International Conference on Machine Learning. 2013.
     """
-    def __init__(self, nchoices, v_sq=1.0):
+    def __init__(self, nchoices, v_sq=1.0, njobs=1):
         if isinstance(v_sq, int):
             v_sq = float(v_sq)
         assert isinstance(v_sq, float)
         _check_constructor_input(_ZeroPredictor(), nchoices)
+        self.njobs = _check_njobs(njobs)
         self.v_sq = v_sq
         self.nchoices = nchoices
         self._oracles = [_LinUCBnTSSingle(self.v_sq, ts=True) for n in range(nchoices)]
 
-class BayesianUCB:
+class BayesianUCB(_BasePolicyWithExploit):
     """
     Bayesian Upper Confidence Bound
     
@@ -1873,93 +1456,33 @@ class BayesianUCB:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
     """
     def __init__(self, nchoices, percentile=80, method='advi', n_samples=20, n_iter='auto',
-                 beta_prior='auto', smoothing=None, assume_unique_reward=False):
+                 beta_prior='auto', smoothing=None, assume_unique_reward=False, njobs=1):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
         if beta_prior == 'auto':
             self.beta_prior = ((5/nchoices, 4), 2)
-        else:
-            self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        _check_constructor_input(_ZeroPredictor(), nchoices)
-        self.nchoices = nchoices
+        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
+                                False, assume_unique_reward, assign_algo=False)
         assert (percentile >= 0) and (percentile <= 100)
         self.percentile = percentile
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method
-        self.base_algorithm = _BayesianLogisticRegression(method=self.method, niter=self.n_iter,
-            nsamples=self.n_samples, mode='ucb', perc=self.percentile)
-    
-    def fit(self, X, a, r):
-        """
-        Samples Logistic Regression coefficients for partially labeled data with actions chosen by this policy.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        ------- 
-        self : obj
-            Copy of this same object
-        """
-        X, a, r = _check_fit_input(X, a, r)
-        self._oracles = _OneVsRest(self.base_algorithm,
-                                   X, a, r,
-                                   self.nchoices,
-                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   False)
-        return self
-    
-    def decision_function(self, X):
-        """
-        Get the scores for each arm following this policy's action-choosing criteria.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X = _check_X_input(X)
-        return self._oracles.predict_proba(X)
-    
-    def predict(self, X, exploit=False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-            
-        Returns
-        -------
-        pred : array (n_samples,)
-            Actions chosen by the policy.
-        """
-        return np.argmax(self.decision_function(X), axis=1)
+        self.base_algorithm = _BayesianLogisticRegression(
+                    method = self.method, niter = self.n_iter,
+                    nsamples = self.n_samples, mode = 'ucb', perc = self.percentile)
+        self.batch_train = False
 
 
-class BayesianTS:
+class BayesianTS(_BasePolicyWithExploit):
     """
     Bayesian Thompson Sampling
     
@@ -2000,83 +1523,24 @@ class BayesianTS:
         Whether to assume that only one arm has a reward per observation. If set to False,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
     """
     def __init__(self, nchoices, method='advi', n_samples=20, n_iter='auto',
-                 beta_prior='auto', smoothing=None, assume_unique_reward=False):
+                 beta_prior='auto', smoothing=None, assume_unique_reward=False, njobs=1):
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
-        self.smoothing = _check_smoothing(smoothing)
-        _check_constructor_input(_ZeroPredictor(), nchoices)
+        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
+                                False, assume_unique_reward, assign_algo=False)
         self.nchoices = nchoices
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method
-        self.base_algorithm = _BayesianLogisticRegression(method=self.method, niter=self.n_iter,
-            nsamples=self.n_samples, mode='ts')
-
-    def fit(self, X, a, r):
-        """
-        Samples coefficients for Logistic Regression models from partially-labeled data, with
-        actions chosen by this same policy.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            Copy of this same object
-        """
-        X, a, r = _check_fit_input(X, a, r)
-        self._oracles = _OneVsRest(self.base_algorithm,
-                                   X,a,r,
-                                   self.nchoices,
-                                   self.beta_prior[1],self.beta_prior[0][0],self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   False)
-        return self
-    
-    def decision_function(self, X):
-        """
-        Get the scores for each arm following this policy's action-choosing criteria.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Data for which to obtain decision function scores for each arm.
-        
-        Returns
-        -------
-        scores : array (n_samples, n_choices)
-            Scores following this policy for each arm.
-        """
-        X = _check_X_input(X)
-        return self._oracles.predict_proba(X)
-    
-    def predict(self, X, exploit=False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-            
-        Returns
-        -------
-        pred : array (n_samples,)
-            Actions chosen by the policy.
-        """
-        return np.argmax(self.decision_function(X), axis=1)
+        self.base_algorithm = _BayesianLogisticRegression(
+                    method = self.method, niter = self.n_iter,
+                    nsamples = self.n_samples, mode = 'ts')
+        self.batch_train = False
