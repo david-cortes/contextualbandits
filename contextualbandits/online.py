@@ -621,7 +621,8 @@ class AdaptiveGreedy(_BasePolicy):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
+        or with this package's or stochQN's 'StochasticLogisticRegression'.
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
@@ -948,7 +949,8 @@ class ActiveExplorer(_BasePolicy):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier'.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
+        or with this package's or stochQN's 'StochasticLogisticRegression'.
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
