@@ -36,6 +36,10 @@ example/offpolicy_learning.ipynb>`_
 <http://nbviewer.jupyter.org/github/david-cortes/contextualbandits/blob/master/
 example/policy_evaluation.ipynb>`_
 
+Serializing (pickling) objects
+=================================
+Don't use `pickle` to userialize objects from this package as it's likely to fail. Use `dill` instead, which has the same syntax and is able to serialize more types of objects.
+
 
 Online Contextual Bandits
 =================================
@@ -59,6 +63,15 @@ Policy Evaluation
 =================================
 
 .. automodule:: contextualbandits.evaluation
+    :members:
+    :undoc-members:
+    :show-inheritance:
+    :inherited-members:
+
+Stochastic Logistic Regression
+=================================
+
+.. automodule:: contextualbandits.logistic
     :members:
     :undoc-members:
     :show-inheritance:
