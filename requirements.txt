@@ -2,3 +2,4 @@ costsensitive
 scikit-learn
 numpy
 pandas
+joblib>=0.13
