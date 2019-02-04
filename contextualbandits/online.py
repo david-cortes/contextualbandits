@@ -227,7 +227,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
 
     References
     ----------
-    [1] “Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
         arXiv preprint arXiv:1811.04383 (2018).
         """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
