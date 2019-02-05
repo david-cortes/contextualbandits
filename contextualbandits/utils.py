@@ -362,7 +362,6 @@ class _OnePredictor(_FixedPredictor):
         return self.predict_avg(X)
 
 class _RandomPredictor(_FixedPredictor):
-    ### Note: this class is not currently used, but is left defined in case there is a future need for it
     def _gen_random(self, X):
         return np.random.random(size = X.shape[0])
 
