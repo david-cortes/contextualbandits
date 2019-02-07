@@ -1,7 +1,8 @@
 import numpy as np
 from costsensitive import RegressionOneVsRest, WeightedAllPairs, _BinTree
-from contextualbandits.utils import _check_constructor_input, _check_fit_input, _check_X_input, \
-    _check_1d_inp, _check_beta_prior, _check_njobs, _OnePredictor, _ZeroPredictor, _RandomPredictor
+from contextualbandits.utils import _check_constructor_input, _check_fit_input, \
+    _check_X_input, _check_1d_inp, _check_beta_prior, _check_smoothing, _check_njobs, \
+    _OnePredictor, _ZeroPredictor, _RandomPredictor
 from contextualbandits.online import SeparateClassifiers
 from copy import deepcopy
 from joblib import Parallel, delayed
@@ -83,6 +84,9 @@ class DoublyRobustEstimator:
     beta_prior : tuple((a, b), n), str "auto", or None
         Beta prior to pass to 'SeparateClassifiers'. Only used when passing to 'reward_estimator'
         a classifier with 'predict_proba'.
+    smoothing : tuple(a, b) or None
+        Smoothing parameter to pass to 'SeparateClassifiers' Only used when passing to 'reward_estimator'
+        a classifier with 'predict_proba'.
     kwargs_costsens
         Additional keyword arguments to pass to the cost-sensitive classifier.
     
@@ -94,7 +98,7 @@ class DoublyRobustEstimator:
         Statistical Science 29.4 (2014): 485-511.
     """
     def __init__(self, base_algorithm, reward_estimator, nchoices, method='rovr',
-                 handle_invalid=True, c=None, pmin=1e-5, beta_prior=None, **kwargs_costsens):
+                 handle_invalid=True, c=None, pmin=1e-5, beta_prior=None, smoothing=(1,2), **kwargs_costsens):
         assert (method == 'rovr') or (method == 'wap')
         self.method = method
         if method == 'wap':
@@ -126,6 +130,7 @@ class DoublyRobustEstimator:
         self.pmin = pmin
         self.handle_invalid = handle_invalid
         self.beta_prior = beta_prior
+        self.smoothing = _check_smoothing(smoothing)
         self.kwargs_costsens = kwargs_costsens
     
     def fit(self, X, a, r, p):
@@ -152,7 +157,7 @@ class DoublyRobustEstimator:
         elif 'predict_proba_separate' in dir(self.reward_estimator):
             C = -self.reward_estimator.predict_proba_separate(X)
         elif 'predict_proba' in dir(self.reward_estimator):
-            reward_estimator = SeparateClassifiers(self.reward_estimator, self.nchoices, beta_prior = self.beta_prior)
+            reward_estimator = SeparateClassifiers(self.reward_estimator, self.nchoices, beta_prior = self.beta_prior, smoothing = self.smoothing)
             reward_estimator.fit(X, a, r)
             C = -reward_estimator.predict_proba_separate(X)
         else:
@@ -188,7 +193,7 @@ class DoublyRobustEstimator:
         pred : array (n_samples,)
             Actions chosen by this technique.
         """
-        X=_check_X_input(X)
+        X = _check_X_input(X)
         return self.oracle.predict(X)
     
     def decision_function(self, X):
@@ -322,12 +327,14 @@ class OffsetTree:
         """
         X = _check_X_input(X)
         pred = np.zeros(X.shape[0])
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(pred, i, X) for i in range(X.shape[0]))
+        shape_single = deepcopy(X.shape)
+        shape_single[0] = 1
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(pred, i, shape_single, X) for i in range(X.shape[0]))
         return np.array(pred).astype('int64')
 
-    def _predict(self, pred, i, X):
+    def _predict(self, pred, i, shape_single, X):
         curr_node = 0
-        X_this = X[i].reshape((1, -1))
+        X_this = X[i].reshape(shape_single)
         while True:
             go_right = self._oracles[curr_node].predict(X_this)
             if go_right:

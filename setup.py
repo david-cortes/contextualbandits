@@ -11,7 +11,7 @@ setup(
    'costsensitive',
    'joblib>=0.13'
 ],
-  version = '0.1.6.2',
+  version = '0.1.6.3',
   description = 'Python Implementations of Algorithms for Contextual Bandits',
   author = 'David Cortes',
   author_email = 'david.cortes.rivera@gmail.com',
