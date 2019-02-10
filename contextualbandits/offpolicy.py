@@ -327,7 +327,7 @@ class OffsetTree:
         """
         X = _check_X_input(X)
         pred = np.zeros(X.shape[0])
-        shape_single = deepcopy(X.shape)
+        shape_single = list(X.shape)
         shape_single[0] = 1
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(pred, i, shape_single, X) for i in range(X.shape[0]))
         return np.array(pred).astype('int64')
