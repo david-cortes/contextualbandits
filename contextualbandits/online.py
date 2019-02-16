@@ -14,15 +14,141 @@ class _BasePolicy:
     def __init__(self):
         pass
 
-    def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices, batch_train, assume_unique_reward, assign_algo=True):
-        _check_constructor_input(base_algorithm, nchoices, batch_train)
-        self.beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
+    def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices,
+            batch_train, assume_unique_reward, assign_algo=True, prior_def_ucb = False):
+        
+        if isinstance(base_algorithm, np.ndarray) or base_algorithm.__class__.__name__ == "Series":
+            base_algorithm = list(base_algorithm)
+
+        self._add_choices(nchoices)
+        _check_constructor_input(base_algorithm, self.nchoices, batch_train)
         self.smoothing = _check_smoothing(smoothing)
         self.njobs = _check_njobs(njobs)
-        self.nchoices = nchoices
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
+        if prior_def_ucb and beta_prior == "auto":
+            beta_prior = ( (5 / self.nchoices, 4), 2 )
+        self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, 2)
+
         if assign_algo:
             self.base_algorithm = base_algorithm
+
+    def _add_choices(self, nchoices):
+        if isinstance(nchoices, int):
+            self.nchoices = nchoices
+            self.choice_names = None
+        elif isinstance(nchoices, list) or nchoices.__class__.__name__ == "Series" or nchoices.__class__.__name__ == "DataFrame":
+            self.choice_names = np.array(nchoices).reshape(-1)
+            self.nchoices = self.choice_names.shape[0]
+            if np.unique(self.choice_names).shape[0] != self.choice_names.shape[0]:
+                raise ValueError("Arm/choice names contain duplicates.")
+        elif isinstance(self.choice_names, np.ndarray):
+            self.choice_names = nchoices.reshape(-1)
+            self.nchoices = self.choice_names.shape[0]
+            if np.unique(self.choice_names).shape[0] != self.choice_names.shape[0]:
+                raise ValueError("Arm/choice names contain duplicates.")
+        else:
+            raise ValueError("'nchoices' must be an integer or list with named arms.")
+
+    def _name_arms(self, pred):
+        if self.choice_names is None:
+            return pred
+        else:
+            return self.choice_names[pred]
+
+    def drop_arm(self, arm_name):
+        """
+        Drop an arm/choice
+
+        Drops (removes/deletes) an arm from the set of available choices to the policy.
+
+        Note
+        ----
+        The available arms, if named, are stored in attribute 'choice_names'.
+        
+        Parameters
+        ----------
+        arm_name : int or object
+            Arm to drop. If passing an integer, will drop at that index (starting at zero). Otherwise,
+            will drop the arm matching this name (argument must be of the same type as the individual entries
+            passed to 'nchoices' in the initialization).
+
+        Returns
+        -------
+        self : object
+            This object
+        """
+        drop_ix = self._get_drop_ix(arm_name)
+        self._oracles._drop_arm(drop_ix)
+        self._drop_ix(drop_ix)
+        return self
+
+    def _get_drop_ix(self, arm_name):
+        if isinstance(arm_name, int):
+            if arm_name > self.nchoices:
+                raise ValueError("Object has only ", str(self.nchoices), " arms.")
+            drop_ix = arm_name
+        else:
+            if self.choice_names is None:
+                raise ValueError("If arms are not named, must pass an integer value.")
+            for ch in range(self.nchoices):
+                if self.choice_names[ch] == arm_name:
+                    drop_ix = ch
+                    break
+            else:
+                raise ValueError("No arm named '", str(arm_name), "' - current names are stored in attribute 'choice_names'.")
+        return drop_ix
+
+    def _drop_ix(self, drop_ix):
+        if self.choice_names is None:
+            self.choice_names = np.arange(self.nchoices)
+        self.nchoices -= 1
+        self.choice_names = np.r_[self.choice_names[:drop_ix], self.choice_names[drop_ix + 1:]]
+
+    def add_arm(self, arm_name = None, fitted_classifier = None, n_w_req = 0, n_wo_rew = 0):
+        """
+        Adds a new arm to the pool of choices
+
+        Parameters
+        ----------
+        arm_name : object
+            Name for this arm. Only applicable when using named arms. If None, will use the name of the last
+            arm plus 1 (will only work when the names are integers).
+        fitted_classifier : object
+            If a classifier has already been fit to rewards coming from this arm, you can pass it here, otherwise,
+            will be started from the same 'base_classifier' as the initial arms.
+        n_w_req : int
+            Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
+        n_wo_rew : int
+            Number of trials/rounds without rewards coming from this arm (only used when using a beta prior or smoothing).
+
+        Returns
+        -------
+        self : object
+            This object
+        """
+        assert isinstance(n_w_req,  int)
+        assert isinstance(n_wo_rew, int)
+        assert n_w_req >= 0
+        assert n_wo_rew >= 0
+        arm_name = self._check_new_arm_name(arm_name)
+        self._oracles._spawn_arm(fitted_classifier, n_w_req, n_wo_rew)
+        self._append_arm(arm_name)
+        return self
+
+    def _check_new_arm_name(self, arm_name):
+        if self.choice_names is None and arm_name is not None:
+            raise ValueError("Cannot create a named arm when no names were passed to 'nchoices'.")
+        if arm_name is None and self.choice_names is not None:
+            try:
+                arm_name = self.choice_names[-1] + 1
+            except:
+                raise ValueError("Must provide an arm name when using named arms.")
+        return arm_name
+
+    def _append_arm(self, arm_name):
+        if self.choice_names is not None:
+            self.choice_names = np.r_[self.choice_names, np.array(arm_name).reshape((1,))]
+        self.nchoices += 1
 
     def fit(self, X, a, r):
         """
@@ -42,7 +168,7 @@ class _BasePolicy:
         self : obj
             This object
         """
-        X, a, r = _check_fit_input(X, a, r)
+        X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
                                    self.nchoices,
@@ -77,7 +203,7 @@ class _BasePolicy:
             This object
         """
         if '_oracles' in dir(self):
-            X, a, r =_check_fit_input(X, a, r)
+            X, a, r =_check_fit_input(X, a, r, self.choice_names)
             self._oracles.partial_fit(X, a, r)
             return self
         else:
@@ -144,21 +270,21 @@ class _BasePolicyWithExploit(_BasePolicy):
             
         Returns
         -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
         if exploit:
             scores = self.exploit(X)
         else:
             scores = self.decision_function(X)
-        pred = np.argmax(scores, axis = 1)
+        pred = self._name_arms(np.argmax(scores, axis = 1))
+
         if not output_score:
             return pred
         else:
             score_max = np.max(scores, axis=1).reshape((-1, 1))
-            return np.c_[pred.reshape((-1, 1)), score_max]
+            return {"choice" : pred, "score" : score_max}
 
 class BootstrappedUCB(_BasePolicyWithExploit):
     """
@@ -177,14 +303,17 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     
     Parameters
     ----------
-    base_algorithm : obj
+    base_algorithm : obj or list
         Base binary classifier for which each sample for each class will be fit.
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     nsamples : int
         Number of bootstrapped samples per class to take.
     percentile : int [0,100]
@@ -235,10 +364,8 @@ class BootstrappedUCB(_BasePolicyWithExploit):
                  assume_unique_reward=False, batch_sample_method='gamma',
                  njobs_arms=1, njobs_samples=-1):
         assert (percentile >= 0) and (percentile <= 100)
-        if beta_prior == 'auto':
-            self.beta_prior = ((5/nchoices, 4), 2)
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms, nchoices,
-                                batch_train, assume_unique_reward, assign_algo=False)
+                                batch_train, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
         self.percentile = percentile
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, self.percentile)
 
@@ -265,8 +392,11 @@ class BootstrappedTS(_BasePolicyWithExploit):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     nsamples : int
         Number of bootstrapped samples per class to take.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
@@ -332,8 +462,11 @@ class SeparateClassifiers(_BasePolicy):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -424,18 +557,18 @@ class SeparateClassifiers(_BasePolicy):
             
         Returns
         -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
         scores = self.decision_function(X)
-        pred = np.argmax(scores, axis = 1)
+        pred = self._name_arms(np.argmax(scores, axis = 1))
+
         if not output_score:
             return pred
         else:
             score_max = np.max(scores, axis=1).reshape((-1, 1))
-            return np.c_[pred.reshape((-1, 1)), score_max]
+            return {"choice" : pred, "score" : score_max}
 
 class EpsilonGreedy(_BasePolicy):
     """
@@ -452,8 +585,11 @@ class EpsilonGreedy(_BasePolicy):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     explore_prob : float (0,1)
         Probability of taking a random action at each round.
     decay : float (0,1)
@@ -522,24 +658,26 @@ class EpsilonGreedy(_BasePolicy):
             
         Returns
         -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
         scores = self.decision_function(X)
         pred = np.argmax(scores, axis = 1)
         if not exploit:
             ix_change_rnd = (np.random.random(size =  X.shape[0]) <= self.explore_prob)
             pred[ix_change_rnd] = np.random.randint(self.nchoices, size = ix_change_rnd.sum())
+        pred = self._name_arms(pred)
+
         if self.decay is not None:
             self.explore_prob *= self.decay ** X.shape[0]
+        
         if not output_score:
             return pred
         else:
             score_max = np.max(scores, axis = 1).reshape((-1, 1))
             score_max[ix_change_rnd] = 1 / self.nchoices
-            return np.c_[pred.reshape((-1, 1)), score_max]
+            return {"choice" : pred, "score" : score_max}
 
 
 class AdaptiveGreedy(_BasePolicy):
@@ -574,8 +712,11 @@ class AdaptiveGreedy(_BasePolicy):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     window_size : int
         Number of predictions after which the threshold will be updated to the desired percentile.
     percentile : int in [0,100] or None
@@ -704,7 +845,7 @@ class AdaptiveGreedy(_BasePolicy):
         self : obj
             This object
         """
-        X, a, r = _check_fit_input(X, a, r)
+        X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
                                    self.nchoices,
@@ -716,7 +857,7 @@ class AdaptiveGreedy(_BasePolicy):
                                    force_counters = self.active_choice is not None,
                                    njobs = self.njobs)
         return self
-    
+
     def predict(self, X, exploit = False):
         """
         Selects actions according to this policy for new data.
@@ -735,6 +876,9 @@ class AdaptiveGreedy(_BasePolicy):
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
+        return self._name_arms(self._predict(X, exploit))
+    
+    def _predict(self, X, exploit = False):
         X = _check_X_input(X)
         
         if X.shape[0] == 0:
@@ -833,8 +977,11 @@ class ExploreFirst(_BasePolicy):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     explore_rounds : int
         Number of rounds to wait before exploitation mode.
         Will switch after making N predictions.
@@ -879,7 +1026,7 @@ class ExploreFirst(_BasePolicy):
         assert isinstance(explore_rounds, int)
         self.explore_rounds = explore_rounds
         self.explore_cnt = 0
-    
+
     def predict(self, X, exploit = False):
         """
         Selects actions according to this policy for new data.
@@ -898,6 +1045,9 @@ class ExploreFirst(_BasePolicy):
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
+        return self._name_arms(self._predict(X, exploit))
+    
+    def _predict(self, X, exploit = False):
         X = _check_X_input(X)
         
         if X.shape[0] == 0:
@@ -946,6 +1096,7 @@ class ActiveExplorer(_BasePolicy):
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+        Can also pass a list with a different (or already-fit) classifier for each arm.
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
@@ -963,8 +1114,10 @@ class ActiveExplorer(_BasePolicy):
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
         If passing 'zero', it will output zero whenever models have not been fitted.
-    nchoices : int
-        Number of arms/labels to choose from.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     explore_prob : float (0,1)
         Probability of selecting an action according to active learning criteria.
     decay : float (0,1)
@@ -1082,7 +1235,7 @@ class ActiveExplorer(_BasePolicy):
             if self.decay is not None:
                 self.explore_prob *= self.decay ** X.shape[0]
         
-        return np.argmax(pred, axis=1)
+        return self._name_arms(np.argmax(pred, axis = 1))
 
     def _crit_active(self, X, pred, grad_crit):
         for choice in range(self.nchoices):
@@ -1125,8 +1278,11 @@ class SoftmaxExplorer(_BasePolicy):
                will apply an inverse sigmoid function.
             2) A 'decision_function' method with unbounded outputs (n_samples,).
             3) A 'predict' method outputting (n_samples,), values in [0,1], to which it will apply an inverse sigmoid function.
-    nchoices : int
-        Number of arms/labels to choose from.
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     multiplier : float or None
         Number by which to multiply the outputs from the base algorithm before applying the softmax function
         (i.e. will take softmax(yhat * multiplier)).
@@ -1217,10 +1373,9 @@ class SoftmaxExplorer(_BasePolicy):
             
         Returns
         -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
         if exploit:
             X = _check_X_input(X)
@@ -1232,16 +1387,21 @@ class SoftmaxExplorer(_BasePolicy):
             if self.inflation_rate is not None:
                 self.multiplier *= self.inflation_rate ** pred.shape[0]
         _apply_softmax(pred)
-        chosen = list()
-        for p_arr in pred:
-            if np.sum(p_arr) != 1.0: #floating point arithmetic issues
-                p_arr = p_arr / np.sum(p_arr)
-            chosen.append(np.random.choice(self.nchoices, p=p_arr))
+        chosen = np.empty(pred.shape[0], dtype = "int64")
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._pick_pred)(i, chosen, pred) for i in range(pred.shape[0]))
+        if output_score:
+            score_chosen = pred[np.arange(pred.shape[0]), np.array(chosen)]
+        chosen = self._name_arms(chosen)
+
         if not output_score:
-            return np.array(chosen)
+            return chosen
         else:
-            return np.c_[np.array(chosen).reshape((-1,1)),\
-                         pred[np.arange(pred.shape[0]),np.array(chosen)].reshape((-1,1))]
+            return {"choice" : chosen, "score" : score_chosen}
+
+    def _pick_pred(self, i, chosen, pred):
+        if pred[i].sum() != 1.0: #floating point arithmetic issues
+            pred[i] = pred[i] / np.sum(pred[i])
+        chosen[i] = np.random.choice(self.nchoices, p = pred[i])
 
 
 class LinUCB:
@@ -1257,8 +1417,10 @@ class LinUCB:
     
     Parameters
     ----------
-    nchoices : int
-        Number of arms/labels to choose from.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     alpha : float
         Parameter to control the upper confidence bound (more is higher).
     njobs : int or None
@@ -1269,18 +1431,76 @@ class LinUCB:
     
     References
     ----------
-    [1] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
+    [1] Chu, Wei, et al. "Contextual bandits with linear payoff functions."
+        Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics. 2011.
+    [2] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
         Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
-    def __init__(self, nchoices, alpha=1.0, njobs=1):
+    def __init__(self, nchoices, alpha = 1.0, njobs = 1):
+        self._ts = False
+        self._add_common_lin(alpha, nchoices, njobs)
+
+    def _add_common_lin(self, alpha, nchoices, njobs):
         if isinstance(alpha, int):
             alpha = float(alpha)
         assert isinstance(alpha, float)
+
+        _BasePolicy._add_choices(self, nchoices)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.njobs = _check_njobs(njobs)
         self.alpha = alpha
         self.nchoices = nchoices
-        self._oracles = [_LinUCBnTSSingle(self.alpha) for n in range(nchoices)]
+        self._oracles = [_LinUCBnTSSingle(self.alpha, self._ts) for n in range(nchoices)]
+        if not self._ts:
+            self.v_sq = self.alpha
+            del self.alpha
+
+    def drop_arm(self, arm):
+        """
+        Drop an arm/choice
+
+        Drops (removes/deletes) an arm from the set of available choices to the policy.
+
+        Note
+        ----
+        The available arms, if named, are stored in attribute 'choice_names'.
+        
+        Parameters
+        ----------
+        arm_name : int or object
+            Arm to drop. If passing an integer, will drop at that index (starting at zero). Otherwise,
+            will drop the arm matching this name (argument must be of the same type as the individual entries
+            passed to 'nchoices' in the initialization).
+
+        Returns
+        -------
+        self : object
+            This object
+        """
+        drop_ix = _BasePolicy._get_drop_ix(self, arm_name)
+        del self._oracles[drop_ix]
+        _BasePolicy._drop_ix(self, drop_ix)
+        return self
+
+    def add_arm(self, arm_name = None):
+        """
+        Adds a new arm to the pool of choices
+
+        Parameters
+        ----------
+        arm_name : object
+            Name for this arm. Only applicable when using named arms. If None, will use the name of the last
+            arm plus 1 (will only work when the names are integers).
+
+        Returns
+        -------
+        self : object
+            This object
+        """
+        arm_name = _BasePolicy._check_new_arm_name(self, arm_name)
+        self._oracles.append(_LinUCBnTSSingle(self.alpha, self._ts))
+        _BasePolicy._append_arm(self, arm_name)
+        return self
     
     def fit(self, X, a, r):
         """"
@@ -1302,14 +1522,14 @@ class LinUCB:
         self : obj
             This object
         """
-        X, a, r = _check_fit_input(X, a, r)
+        X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self.ndim = X.shape[1]
         Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.n))
         return self
 
     def _fit_single(self, choice, X, a, r):
         this_action = a == choice
-        self._oracles[n].fit(X[this_action,:], r[this_action].astype('float64'))
+        self._oracles[n].fit(X[this_action, :], r[this_action].astype('float64'))
                 
     def partial_fit(self, X, a, r):
         """"
@@ -1329,10 +1549,10 @@ class LinUCB:
         self : obj
             This object
         """
-        X, a, r = _check_fit_input(X, a, r)
+        X, a, r = _check_fit_input(X, a, r, self.choice_names)
         for n in range(self.nchoices):
             this_action = a == n
-            self._oracles[n].partial_fit(X[this_action,:], r[this_action].astype('float64'))
+            self._oracles[n].partial_fit(X[this_action, :], r[this_action].astype('float64'))
             
         return self
     
@@ -1353,23 +1573,27 @@ class LinUCB:
             
         Returns
         -------
-        pred : array (n_samples,) or (n_samples, 2)
-            Actions chosen by the policy. If passing output_score=True, it will be an array
-            with the first column indicating the action and the second one indicating the score
-            that the classifier gave to that class.
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
         X = _check_X_input(X)
         pred = np.zeros((X.shape[0], self.nchoices))
-        for choice in range(self.nchoices):
-            if exploit:
-                pred[:, choice] = self._oracles[choice].exploit(X)
-            else:
-                pred[:, choice] = self._oracles[choice].predict(X)
-        if output_score:
-            return np.c_[np.argmax(pred, axis=1), np.max(pred, axis=1)]
-        else:
-            return np.argmax(pred, axis=1)
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(choice, pred, exploit) for choice in range(self.nchoices))
 
+        if output_score:
+            score_max = np.max(pred, axis=1)
+        pred = _BasePolicy._name_arms(self, np.argmax(pred, axis = 1))
+        if not output_score:
+            pred
+        else:
+            return {"choice" : pred, "score" : score_max}
+
+    def _predict(self, choice, pred, exploit):
+        if exploit:
+            pred[:, choice] = self._oracles[choice].exploit(X)
+        else:
+            pred[:, choice] = self._oracles[choice].predict(X)
 
 class LinTS(LinUCB):
     """
@@ -1381,16 +1605,13 @@ class LinTS(LinUCB):
     The B matrix in the formulas are not inverted after each update, but rather, only their inverse is stored
     and is updated after each observation using the Sherman-Morrison formula.
     Thus, updating is quite fast, but there is no speed-up in doing batch updates.
-
-    Note
-    ----
-    This class has the exact same API as LinUCB, in case it doesn't show in the docs, with the only difference
-    being that 'alpha' is renamed to 'v_sq' to be in line with the reference paper.
     
     Parameters
     ----------
-    nchoices : int
-        Number of arms/labels to choose from.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     v_sq : float
         Parameter by which to multiply the covariance matrix (more means higher variance).
     njobs : int or None
@@ -1405,14 +1626,8 @@ class LinTS(LinUCB):
         International Conference on Machine Learning. 2013.
     """
     def __init__(self, nchoices, v_sq=1.0, njobs=1):
-        if isinstance(v_sq, int):
-            v_sq = float(v_sq)
-        assert isinstance(v_sq, float)
-        _check_constructor_input(_ZeroPredictor(), nchoices)
-        self.njobs = _check_njobs(njobs)
-        self.v_sq = v_sq
-        self.nchoices = nchoices
-        self._oracles = [_LinUCBnTSSingle(self.v_sq, ts=True) for n in range(nchoices)]
+        self._ts = True
+        self._add_common_lin(v_sq, nchoices, njobs)
 
 class BayesianUCB(_BasePolicyWithExploit):
     """
@@ -1428,8 +1643,10 @@ class BayesianUCB(_BasePolicyWithExploit):
     
     Parameters
     ----------
-    nchoices : int
-        Number of arms/labels to choose from.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     percentile : int [0,100]
         Percentile of the predictions sample to take.
     method : str, either 'advi' or 'nuts'
@@ -1470,10 +1687,8 @@ class BayesianUCB(_BasePolicyWithExploit):
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
-        if beta_prior == 'auto':
-            self.beta_prior = ((5/nchoices, 4), 2)
         self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
-                                False, assume_unique_reward, assign_algo=False)
+                                False, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
         assert (percentile >= 0) and (percentile <= 100)
         self.percentile = percentile
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
@@ -1499,8 +1714,10 @@ class BayesianTS(_BasePolicyWithExploit):
     
     Parameters
     ----------
-    nchoices : int
-        Number of arms/labels to choose from.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     method : str, either 'advi' or 'nuts'
         Method used to sample coefficients (see PyMC3's documentation for mode details).
     n_samples : int

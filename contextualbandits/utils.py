@@ -1,6 +1,7 @@
 import numpy as np, types, warnings, multiprocessing
 from copy import deepcopy
 from joblib import Parallel, delayed
+import pandas as pd
 
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
@@ -65,12 +66,18 @@ def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
 
 def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
+    if isinstance(base_algorithm, list):
+        if len(base_algorithm) != nchoices:
+            raise ValueError("Number of classifiers does not match with number of choices.")
+        ### For speed reason, here it will not test if each classifier has the right methods
+    else:
+        assert ('fit' in dir(base_algorithm))
+        assert ('predict_proba' in dir(base_algorithm)) or ('decision_function' in dir(base_algorithm)) or ('predict' in dir(base_algorithm))
+        if batch_train:
+            assert 'partial_fit' in dir(base_algorithm)
+
     assert nchoices >= 2
     assert isinstance(nchoices, int)
-    assert ('fit' in dir(base_algorithm))
-    assert ('predict_proba' in dir(base_algorithm)) or ('decision_function' in dir(base_algorithm)) or ('predict' in dir(base_algorithm))
-    if batch_train:
-        assert 'partial_fit' in dir(base_algorithm)
 
 def _check_njobs(njobs):
     if njobs < 1:
@@ -106,12 +113,16 @@ def _check_smoothing(smoothing):
     return smoothing[0], smoothing[1]
 
 
-def _check_fit_input(X, a, r):
+def _check_fit_input(X, a, r, choice_names = None):
     X = _check_X_input(X)
     a = _check_1d_inp(a)
     r = _check_1d_inp(r)
     assert X.shape[0] == a.shape[0]
     assert X.shape[0] == r.shape[0]
+    if choice_names is not None:
+        a = pd.Categorical(a, choice_names).codes
+        if pd.isnull(a).sum() > 0:
+            raise ValueError("Input contains actions/arms that this object does not have.")
     return X, a, r
 
 def _check_X_input(X):
@@ -481,8 +492,12 @@ class _OneVsRest:
             base = _convert_decision_function_w_sigmoid(base)
         if partialfit:
             base = _add_method_predict_robust(base)
-        self.base = base
-        self.algos = [deepcopy(base) for i in range(n)]
+        if isinstance(base, list):
+            self.base = None
+            self.algos = base
+        else:
+            self.base = base
+            self.algos = [deepcopy(base) for i in range(n)]
         self.n = n
         self.smooth = smooth
         self.assume_un = assume_un
@@ -491,7 +506,6 @@ class _OneVsRest:
         self.thr = thr
         self.partialfit = bool(partialfit)
         self.force_counters = bool(force_counters)
-        # if ((force_fit or partialfit) and (self.thr > 0)) or force_counters:
         if self.force_counters or (self.thr > 0 and not self.force_fit):
             ## in case it has beta prior, keeps track of the counters until no longer needed
             self.alpha = alpha
@@ -512,6 +526,34 @@ class _OneVsRest:
             self.partial_fit(X, a, r)
         else:
             Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._full_fit_single)(choice, X, a, r) for choice in range(self.n))
+
+    def _drop_arm(self, drop_ix):
+        del self.algos[drop_ix]
+        self.n -= 1
+        if self.smooth is not None:
+            self.counters = self.counters[:, np.arange(self.counters.shape[1]) != drop_ix]
+        if self.force_counters or (self.thr > 0 and not self.force_fit):
+            self.beta_counters = self.beta_counters[:, np.arange(self.beta_counters.shape[1]) != drop_ix]
+
+    def _spawn_arm(self, fitted_classifier = None, n_w_req = 0, n_wo_rew = 0):
+        self.n += 1
+        if self.smooth is not None:
+            self.counters = np.c_[self.counters, np.array([n_w_req + n_wo_rew]).reshape((1, 1)).astype(self.counters.dtype)]
+        if self.force_counters or (self.thr > 0 and not self.force_fit):
+            new_beta_col = np.array([0 if (n_w_req + n_wo_rew) < self.thr else 1, self.alpha + n_w_req, self.beta + n_wo_rew]).reshape((3, 1)).astype(self.beta_counters.dtype)
+            self.beta_counters = np.c_[self.beta_counters, new_beta_col]
+        if fitted_classifier is not None:
+            self.algos.append(fitted_classifier)
+        else:
+            if self.force_fit or self.partialfit:
+                if self.base is None:
+                    raise ValueError("Must provide a classifier when initializing with different classifiers per arm.")
+                self.algos.append( deepcopy(self.base) )
+            else:
+                if self.force_counters or (self.thr > 0 and not self.force_fit):
+                    self.algos.append(_BetaPredictor(self.beta_counters[:, -1][1], self.beta_counters[:, -1][2]))
+                else:
+                    self.algos.append(_ZeroPredictor())
 
     def _update_beta_counters(self, yclass, choice):
         if (self.beta_counters[0, choice] == 0) or self.force_counters:
@@ -750,7 +792,7 @@ class _LinUCBnTSSingle:
                 return pred
 
             for i in range(X.shape[0]):
-                x = X[i,:].reshape((-1,1))
+                x = X[i, :].reshape((-1, 1))
                 cb = self.alpha * np.sqrt(np.linalg.multi_dot([x.T, self.Ainv, x]))
                 pred[i] += cb[0]
 

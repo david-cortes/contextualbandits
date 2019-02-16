@@ -76,6 +76,11 @@ Package documentation is available in readthedocs:
 
 Documentation is also internally available through docstrings (e.g. you can try `help(contextualbandits.online.BootstrappedUCB)`, `help(contextualbandits.online.BootstrappedUCB.fit)`, etc.).
 
+## Recent additions
+
+* The online module can now use named arms, as well as add and drop arms from already-initialized objects.
+* The online and off-policy modules can now parallelize computations across arms (also across samples in bootstrapped methods).
+
 
 ## Implemented algorithms
 
@@ -126,7 +131,7 @@ m = dill.load(open("saved_ucb_model.dill", "rb"))
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
 
-This package assumes that the binary classification algorithms used have probabilistic outputs, ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation. Under some of the online algorithms or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
+Many of this package's methods assume that the binary classification algorithms used have probabilistic outputs (e.g. `DoublyRobustEstimator`), ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation (otherwise will assume the outputs from `predict` are bounded between zero and one). Under some of the online algorithms (e.g. `SoftmaxExplorer`, `AdaptiveGreedy`) or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
 Be aware that this is a research-oriented package and it has not been optimized for speed.
 
