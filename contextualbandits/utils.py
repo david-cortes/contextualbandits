@@ -543,6 +543,10 @@ class _OneVsRest:
             new_beta_col = np.array([0 if (n_w_req + n_wo_rew) < self.thr else 1, self.alpha + n_w_req, self.beta + n_wo_rew]).reshape((3, 1)).astype(self.beta_counters.dtype)
             self.beta_counters = np.c_[self.beta_counters, new_beta_col]
         if fitted_classifier is not None:
+            if 'predict_proba' not in dir(fitted_classifier):
+                fitted_classifier = _convert_decision_function_w_sigmoid(fitted_classifier)
+            if partialfit:
+                fitted_classifier = _add_method_predict_robust(fitted_classifier)
             self.algos.append(fitted_classifier)
         else:
             if self.force_fit or self.partialfit:
