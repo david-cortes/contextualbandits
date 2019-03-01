@@ -775,7 +775,7 @@ class _LinUCBnTSSingle:
             x = X[i,:].reshape((-1, 1))
             r = y[i]
             sumb += r * x
-            self._sherman_morrison_update(Ainv, x)
+            self._sherman_morrison_update(self.Ainv, x)
 
         self.b += sumb
 
