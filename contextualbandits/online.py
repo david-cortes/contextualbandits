@@ -1529,7 +1529,7 @@ class LinUCB:
 
     def _fit_single(self, choice, X, a, r):
         this_action = a == choice
-        self._oracles[n].fit(X[this_action, :], r[this_action].astype('float64'))
+        self._oracles[choice].fit(X[this_action, :], r[this_action].astype('float64'))
                 
     def partial_fit(self, X, a, r):
         """"
