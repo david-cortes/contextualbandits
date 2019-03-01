@@ -1524,7 +1524,7 @@ class LinUCB:
         """
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self.ndim = X.shape[1]
-        Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.n))
+        Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.nchoices))
         return self
 
     def _fit_single(self, choice, X, a, r):
