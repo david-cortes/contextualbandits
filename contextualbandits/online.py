@@ -1579,17 +1579,17 @@ class LinUCB:
         """
         X = _check_X_input(X)
         pred = np.zeros((X.shape[0], self.nchoices))
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(choice, pred, exploit) for choice in range(self.nchoices))
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(choice, pred, exploit, X) for choice in range(self.nchoices))
 
         if output_score:
             score_max = np.max(pred, axis=1)
         pred = _BasePolicy._name_arms(self, np.argmax(pred, axis = 1))
         if not output_score:
-            pred
+            return pred
         else:
             return {"choice" : pred, "score" : score_max}
 
-    def _predict(self, choice, pred, exploit):
+    def _predict(self, choice, pred, exploit, X):
         if exploit:
             pred[:, choice] = self._oracles[choice].exploit(X)
         else:
