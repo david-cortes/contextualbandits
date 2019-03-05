@@ -78,7 +78,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
-* Fixed problems related to Python3 features when running online online module in Python 2.7.
+* Fixed problems related to Python3 features when running online module in Python 2.7.
 * The online module can now use named arms, as well as add and drop arms from already-initialized objects.
 * The online and off-policy modules can now parallelize computations across arms (also across samples in bootstrapped methods).
 

@@ -60,7 +60,7 @@ def _decision_function_w_sigmoid_from_predict(self, X):
     return self.predict(X).reshape(-1)
 
 def _calculate_beta_prior(nchoices):
-    return (3.0 / nchoices, 4.0)
+    return (3.0 / nchoices, 4)
 
 def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
