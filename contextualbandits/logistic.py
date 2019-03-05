@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import numpy as np, warnings
 from sklearn.linear_model.logistic import _logistic_loss_and_grad
 from sklearn.linear_model import RidgeClassifier

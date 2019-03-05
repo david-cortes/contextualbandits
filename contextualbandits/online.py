@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import pandas as pd, numpy as np, warnings
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
@@ -26,7 +28,7 @@ class _BasePolicy:
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         if prior_def_ucb and beta_prior == "auto":
-            beta_prior = ( (5 / self.nchoices, 4), 2 )
+            beta_prior = ( (5.0 / self.nchoices, 4.0), 2 )
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, 2)
 
         if assign_algo:
@@ -115,7 +117,8 @@ class _BasePolicy:
             arm plus 1 (will only work when the names are integers).
         fitted_classifier : object
             If a classifier has already been fit to rewards coming from this arm, you can pass it here, otherwise,
-            will be started from the same 'base_classifier' as the initial arms.
+            will be started from the same 'base_classifier' as the initial arms. If using bootstrapped or Bayesian methods,
+            don't pass a classifier here (unless using the classes in `utils._BootstrappedClassifierBase`, `utils._BayesianLogisticRegression`)
         n_w_req : int
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
@@ -679,14 +682,35 @@ class EpsilonGreedy(_BasePolicy):
             score_max[ix_change_rnd] = 1 / self.nchoices
             return {"choice" : pred, "score" : score_max}
 
+class _ActivePolicy(_BasePolicy):
 
-class AdaptiveGreedy(_BasePolicy):
+    def _crit_active(self, X, pred, grad_crit):
+        for choice in range(self.nchoices):
+            if self._oracles.should_calculate_grad(choice) or self._force_fit:
+                grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
+            else:
+                grad_norms = self._rand_grad_norms(X,
+                    self._oracles.get_n_pos(choice), self._oracles.get_n_neg(choice))
+
+            if grad_crit == 'min':
+                pred[:, choice] = grad_norms.min(axis = 1)
+            elif grad_crit == 'max':
+                pred[:, choice] = grad_norms.max(axis = 1)
+            elif grad_crit == 'weighted':
+                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_norms).sum(axis = 1)
+            else:
+                raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
+
+        return pred
+
+
+class AdaptiveGreedy(_ActivePolicy):
     """
     Adaptive Greedy
     
     Takes the action with highest estimated reward, unless that estimation falls below a certain
     threshold, in which case it takes a an action either at random or according to an active learning
-    heuristic.
+    heuristic (same way as `ActiveExplorer`).
 
     Note
     ----
@@ -714,14 +738,14 @@ class AdaptiveGreedy(_BasePolicy):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     window_size : int
         Number of predictions after which the threshold will be updated to the desired percentile.
     percentile : int in [0,100] or None
         Percentile of the predictions sample to set as threshold, below which actions are random.
-        If None, will not take percentiles but use the intial threshold and apply decay to it.
+        If None, will not take percentiles, will instead use the intial threshold and apply decay to it.
     decay : float (0,1) or None
         After each prediction, either the threshold or the percentile gets adjusted to:
             val_t+1 = val_t*decay
@@ -758,11 +782,12 @@ class AdaptiveGreedy(_BasePolicy):
     active_choice : None or str in {'min', 'max', 'weighted'}
         How to select arms when predictions are below the threshold. If passing None, selects them at random (default).
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
-        Non-random selection requires classifiers with a 'coef_' attribute, such as logistic regression.
+        Non-random active selection requires being able to calculate gradients (gradients for logistic regression
+        are already defined with an option 'auto' below).
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (with log loss), and 'RidgeClassifier';
         or with this package's or stochQN's 'StochasticLogisticRegression'.
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
@@ -802,7 +827,7 @@ class AdaptiveGreedy(_BasePolicy):
             assert isinstance(percentile, int)
             assert (percentile > 0) and (percentile < 100)
         if initial_thr == 'auto':
-            initial_thr = 1 / (np.sqrt(nchoices) * 2)
+            initial_thr = 1.0 / (np.sqrt(nchoices) * 2.0)
         assert isinstance(initial_thr, float)
         assert window_size > 0
         self.window_size = window_size
@@ -916,9 +941,7 @@ class AdaptiveGreedy(_BasePolicy):
                 # complete window, update percentile if needed
                 self.window = np.r_[self.window, pred_max]
                 if self.decay_type == 'percentile':
-                    # print('thr before: ', self.thr, "perc: ", str(self.percentile))
                     self.thr = np.percentile(self.window, self.percentile)
-                    # print('thr after: ', self.thr, "perc: ", str(self.percentile))
 
                 # reset window
                 self.window = np.array([])
@@ -944,10 +967,10 @@ class AdaptiveGreedy(_BasePolicy):
 
     def _calc_preds(self, X):
         pred_proba = self._oracles.decision_function(X)
-        pred_max = pred_proba.max(axis=1)
-        pred = np.argmax(pred_proba, axis=1)
+        pred_max = pred_proba.max(axis = 1)
+        pred = np.argmax(pred_proba, axis = 1)
         set_greedy = pred_max <= self.thr
-        if set_greedy.sum() > 0:
+        if np.any(set_greedy):
             self._choose_greedy(set_greedy, X, pred, pred_proba)
         return pred, pred_max
 
@@ -956,7 +979,7 @@ class AdaptiveGreedy(_BasePolicy):
             pred[set_greedy] = np.random.randint(self.nchoices, size = set_greedy.sum())
         else:
             pred[set_greedy] = np.argmax(
-                ActiveExplorer._crit_active(self,
+                self._crit_active(
                     X[set_greedy],
                     pred_all[set_greedy],
                     self.active_choice),
@@ -1073,7 +1096,7 @@ class ExploreFirst(_BasePolicy):
         else:
             return self._oracles.predict(X)
 
-class ActiveExplorer(_BasePolicy):
+class ActiveExplorer(_ActivePolicy):
     """
     Active Explorer
     
@@ -1086,7 +1109,9 @@ class ActiveExplorer(_BasePolicy):
     (these are selected at random, just like in Epsilon-Greedy), the guiding heuristic
     is the gradient that the observation, having either label (either weighted by the estimted
     probability, or taking the maximum or minimum), would produce on each model that
-    predicts a class, given the current coefficients for that model.
+    predicts a class, given the current coefficients for that model. This of course requires
+    being able to calculate gradients - package comes with pre-defined gradient functions for
+    logistic regression, and allows passing custom functions for others.
     
     Parameters
     ----------
@@ -1236,25 +1261,6 @@ class ActiveExplorer(_BasePolicy):
                 self.explore_prob *= self.decay ** X.shape[0]
         
         return self._name_arms(np.argmax(pred, axis = 1))
-
-    def _crit_active(self, X, pred, grad_crit):
-        for choice in range(self.nchoices):
-            if self._oracles.should_calculate_grad(choice) or self._force_fit:
-                grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
-            else:
-                grad_norms = self._rand_grad_norms(X,
-                    self._oracles.get_n_pos(choice), self._oracles.get_n_neg(choice))
-
-            if grad_crit == 'min':
-                pred[:, choice] = grad_norms.min(axis = 1)
-            elif grad_crit == 'max':
-                pred[:, choice] = grad_norms.max(axis = 1)
-            elif grad_crit == 'weighted':
-                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_norms).sum(axis = 1)
-            else:
-                raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
-
-        return pred
 
 class SoftmaxExplorer(_BasePolicy):
     """

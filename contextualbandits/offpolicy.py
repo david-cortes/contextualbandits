@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import numpy as np
 from costsensitive import RegressionOneVsRest, WeightedAllPairs, _BinTree
 from contextualbandits.utils import _check_constructor_input, _check_fit_input, \

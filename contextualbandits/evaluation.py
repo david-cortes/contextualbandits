@@ -1,3 +1,5 @@
+# -*- coding: utf-8 -*-
+
 import pandas as pd, numpy as np
 from contextualbandits.utils import _check_fit_input, _check_1d_inp, _check_X_input
 from contextualbandits.online import SeparateClassifiers

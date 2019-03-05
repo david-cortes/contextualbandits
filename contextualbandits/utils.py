@@ -60,7 +60,7 @@ def _decision_function_w_sigmoid_from_predict(self, X):
     return self.predict(X).reshape(-1)
 
 def _calculate_beta_prior(nchoices):
-    return (3/nchoices, 4)
+    return (3.0 / nchoices, 4.0)
 
 def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
@@ -93,7 +93,7 @@ def _check_beta_prior(beta_prior, nchoices, default_b):
     if beta_prior == 'auto':
         out = (_calculate_beta_prior(nchoices), default_b)
     elif beta_prior is None:
-        out = ((1,1), 0)
+        out = ((1.0,1.0), 0)
     else:
         assert len(beta_prior) == 2
         assert len(beta_prior[0]) == 2
@@ -110,7 +110,7 @@ def _check_smoothing(smoothing):
     assert len(smoothing) >= 2
     assert (smoothing[0] >= 0) & (smoothing[1] >= 0)
     assert smoothing[1] > smoothing[0]
-    return smoothing[0], smoothing[1]
+    return float(smoothing[0]), float(smoothing[1])
 
 
 def _check_fit_input(X, a, r, choice_names = None):
@@ -196,7 +196,7 @@ def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
 
 def _extract_regularization(base_algorithm):
     if base_algorithm.__class__.__name__ == 'LogisticRegression':
-        return 1 / base_algorithm.C
+        return 1.0 / base_algorithm.C
     elif base_algorithm.__class__.__name__ == 'SGDClassifier':
         return base_algorithm.alpha
     elif base_algorithm.__class__.__name__ == 'RidgeClassifier':
@@ -263,7 +263,7 @@ def _gen_random_grad_norms(X, n_pos, n_neg):
     ### Note: there isn't any theoretical reason behind these chosen distributions and numbers.
     ### A custom function might do a lot better.
     magic_number = np.log10(X.shape[1])
-    smooth_prop = (n_pos + 1) / (n_pos + n_neg + 2)
+    smooth_prop = (n_pos + 1.0) / (n_pos + n_neg + 2.0)
     return np.c_[np.random.gamma(magic_number / smooth_prop, magic_number, size=X.shape[0]),
                  np.random.gamma(magic_number * smooth_prop, magic_number, size=X.shape[0])]
 
@@ -277,18 +277,18 @@ def _apply_smoothing(preds, smoothing, counts):
 
 def _apply_sigmoid(x):
     if (len(x.shape) == 2):
-        x[:, :] = 1 / (1 + np.exp(-x))
+        x[:, :] = 1.0 / (1.0 + np.exp(-x))
     else:
-        x[:] = 1 / (1 + np.exp(-x))
+        x[:] = 1.0 / (1.0 + np.exp(-x))
     return None
 
 def _apply_inverse_sigmoid(x):
     x[x == 0] = 1e-8
     x[x == 1] = 1 - 1e-8
     if (len(x.shape) == 2):
-        x[:, :] = np.log(x / (1 - x))
+        x[:, :] = np.log(x / (1.0 - x))
     else:
-        x[:] = np.log(x / (1 - x))
+        x[:] = np.log(x / (1.0 - x))
     return None
 
 def _apply_softmax(x):
@@ -313,7 +313,7 @@ class _BetaPredictor(_FixedPredictor):
 
     def predict_proba(self, X):
         preds = np.random.beta(self.a, self.b, size=X.shape[0]).reshape((-1, 1))
-        return np.c_[1 - preds, preds]
+        return np.c_[1.0 - preds, preds]
 
     def decision_function(self, X):
         return np.random.beta(self.a, self.b, size=X.shape[0])
@@ -754,7 +754,7 @@ class _LinUCBnTSSingle:
 
     def _sherman_morrison_update(self, Ainv, x):
         ## x should have shape (n, 1)
-        Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1 + np.linalg.multi_dot([x.T, Ainv, x]))
+        Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1.0 + np.linalg.multi_dot([x.T, Ainv, x]))
 
     def fit(self, X, y):
         if len(X.shape) == 1:
@@ -772,7 +772,7 @@ class _LinUCBnTSSingle:
             self.b = np.zeros((X.shape[1], 1))
         sumb = np.zeros((X.shape[1], 1))
         for i in range(X.shape[0]):
-            x = X[i,:].reshape((-1, 1))
+            x = X[i, :].reshape((-1, 1))
             r = y[i]
             sumb += r * x
             self._sherman_morrison_update(self.Ainv, x)
@@ -781,7 +781,7 @@ class _LinUCBnTSSingle:
 
     def predict(self, X, exploit=False):
         if len(X.shape) == 1:
-            X = X.reshape((1,-1))
+            X = X.reshape((1, -1))
 
         if self.ts:
             mu = (self.Ainv.dot(self.b)).reshape(-1)
