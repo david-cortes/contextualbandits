@@ -1088,8 +1088,8 @@ class ExploreFirst(_BasePolicy):
             
             # case 2: some predictions are within allowance, others are not
             else:
-                n_explore = self.explore_rounds - self.explore_cnt
-                pred = np.zeros(X.shape[0])
+                n_explore = self.explore_rounds - self.explore_cnt - X.shape[0]
+                pred = np.empty(X.shape[0], type = "float64")
                 pred[:n_explore] = np.random.randint(self.nchoices, n_explore)
                 pred[n_explore:] = self._oracles.predict(X)
                 return pred
