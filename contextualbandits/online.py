@@ -1091,7 +1091,7 @@ class ExploreFirst(_BasePolicy):
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
                 pred = np.empty(X.shape[0], type = "float64")
                 pred[:n_explore] = np.random.randint(self.nchoices, n_explore)
-                pred[n_explore:] = self._oracles.predict(X)
+                pred[n_explore:] = self._oracles.predict(X[n_explore:])
                 return pred
         else:
             return self._oracles.predict(X)
