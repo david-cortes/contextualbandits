@@ -17,7 +17,7 @@ Paper can be cited as
 }
 ```
 
-## Instalation
+## Installation
 
 Package is available on PyPI, can be installed with 
 
