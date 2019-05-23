@@ -259,6 +259,9 @@ class _BasePolicyWithExploit(_BasePolicy):
                 self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
                 )
 
+    def exploit(self, X):
+        return self._oracles.exploit(X)
+
     def predict(self, X, exploit = False, output_score = False):
         """
         Selects actions according to this policy for new data.
@@ -267,6 +270,9 @@ class _BasePolicyWithExploit(_BasePolicy):
         ----------
         X : array (n_samples, n_features)
             New observations for which to choose an action according to this policy.
+        exploit : bool
+            Whether to make a prediction according to the policy, or to just choose the
+            arm with the highest expected reward according to current models.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.

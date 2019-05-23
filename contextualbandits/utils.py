@@ -312,25 +312,28 @@ class _BetaPredictor(_FixedPredictor):
         self.b = b
 
     def predict_proba(self, X):
-        preds = np.random.beta(self.a, self.b, size=X.shape[0]).reshape((-1, 1))
+        preds = np.random.beta(self.a, self.b, size = X.shape[0]).reshape((-1, 1))
         return np.c_[1.0 - preds, preds]
 
     def decision_function(self, X):
-        return np.random.beta(self.a, self.b, size=X.shape[0])
+        return np.random.beta(self.a, self.b, size = X.shape[0])
 
     def predict(self, X):
-        return (np.random.beta(self.a, self.b, size=X.shape[0])).astype('uint8')
+        return (np.random.beta(self.a, self.b, size = X.shape[0])).astype('uint8')
 
     def predict_avg(self, X):
         pred = self.decision_function(X)
         _apply_inverse_sigmoid(pred)
         return pred
 
-    def predict_rnd(self,X):
+    def predict_rnd(self, X):
         return self.predict_avg(X)
 
-    def predict_ucb(self,X):
+    def predict_ucb(self, X):
         return self.predict_avg(X)
+
+    def exploit(self, X):
+        return np.repeat(self.a / self.b, X.shape[0])
 
 class _ZeroPredictor(_FixedPredictor):
 
