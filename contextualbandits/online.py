@@ -43,7 +43,7 @@ class _BasePolicy:
             self.nchoices = self.choice_names.shape[0]
             if np.unique(self.choice_names).shape[0] != self.choice_names.shape[0]:
                 raise ValueError("Arm/choice names contain duplicates.")
-        elif isinstance(self.choice_names, np.ndarray):
+        elif isinstance(nchoices, np.ndarray):
             self.choice_names = nchoices.reshape(-1)
             self.nchoices = self.choice_names.shape[0]
             if np.unique(self.choice_names).shape[0] != self.choice_names.shape[0]:
@@ -205,6 +205,8 @@ class _BasePolicy:
         self : obj
             This object
         """
+        if not self.batch_train:
+            raise ValueError("Must pass 'batch_train' = 'True' to use '.partial_fit'.")
         if '_oracles' in dir(self):
             X, a, r =_check_fit_input(X, a, r, self.choice_names)
             self._oracles.partial_fit(X, a, r)
