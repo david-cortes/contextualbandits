@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from costsensitive import RegressionOneVsRest, WeightedAllPairs, _BinTree
 from contextualbandits.utils import _check_constructor_input, _check_fit_input, \
     _check_X_input, _check_1d_inp, _check_beta_prior, _check_smoothing, _check_njobs, \
     _OnePredictor, _ZeroPredictor, _RandomPredictor
@@ -150,6 +149,10 @@ class DoublyRobustEstimator:
         p : array (n_samples)
             Reward estimates for the actions that were chosen by the policy.
         """
+        try:
+            from costsensitive import RegressionOneVsRest, WeightedAllPairs
+        except:
+            raise ValueError("This functionality requires package 'costsensitive'.\nCan be installed with 'pip install costsensitive'.")
         p = _check_1d_inp(p)
         assert p.shape[0] == X.shape[0]
         l = -r
@@ -243,6 +246,10 @@ class OffsetTree:
         Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining. ACM, 2009.
     """
     def __init__(self, base_algorithm, nchoices, c = None, pmin = 1e-5, njobs = -1):
+        try:
+            from costsensitive import _BinTree
+        except:
+            raise ValueError("This functionality requires package 'costsensitive'.\nCan be installed with 'pip install costsensitive'.")
         _check_constructor_input(base_algorithm, nchoices)
         self.base_algorithm = base_algorithm
         self.nchoices = nchoices
