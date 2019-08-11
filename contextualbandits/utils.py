@@ -600,7 +600,7 @@ class _OneVsRest:
     def _partial_fit_single(self, choice, X, a, r):
         yclass, this_choice = self._filter_arm_data(X, a, r, choice)
         if self.smooth is not None:
-            self.counters[choice] += yclass.shape[0]
+            self.counters[0, choice] += yclass.shape[0]
 
         xclass = X[this_choice, :]
         if (xclass.shape[0] > 0) or self.force_fit:

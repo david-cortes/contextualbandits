@@ -11,7 +11,7 @@ setup(
    'pandas',
    'joblib>=0.13'
 ],
-  version = '0.1.7.9',
+  version = '0.1.7.10',
   description = 'Python Implementations of Algorithms for Contextual Bandits',
   author = 'David Cortes',
   author_email = 'david.cortes.rivera@gmail.com',

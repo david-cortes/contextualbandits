@@ -6,8 +6,8 @@ from sklearn.linear_model import RidgeClassifier
 from contextualbandits.utils import _check_X_input, _check_1d_inp
 
 #### Pre-defined step size sequences
-def _step_size_sqrt_over10(initial_step_size, iteration_num):
-	return initial_step_size / np.sqrt(1 + int(iteration_num/10))
+def _step_size_sqrt_over100(initial_step_size, iteration_num):
+	return initial_step_size / np.sqrt(1 + int(iteration_num/100))
 
 def _step_size_const(initial_step_size, iteration_num):
 	return initial_step_size
@@ -46,7 +46,7 @@ class StochasticLogisticRegression:
 		assert rmsprop_reg > 0
 		if decr_step_size is not None:
 			if decr_step_size == "auto":
-				decr_step_size = _step_size_sqrt_over10
+				decr_step_size = _step_size_sqrt_over100
 			else:
 				assert callable(decr_step_size)
 		else:
@@ -72,7 +72,7 @@ class StochasticLogisticRegression:
 		if sample_weight is None:
 			sample_weight = np.ones(X.shape[0])
 		assert sample_weight.shape[0] == X.shape[0]
-		sample_weight /= X.shape[0]
+		sample_weight /= sample_weight.sum()
 		return X, y, sample_weight
 
 	def _init_weights(self, n):
