@@ -32,7 +32,7 @@ class StochasticLogisticRegression:
 		decr_step_size : None, str 'auto', or function(initial_step_size, iteration_number) -> float
 			Function that determines the step size to take at each iteration.
 			If passing None, will use constant step size.
-			If passing 'auto', will use 1 / sqrt(1 + int(iteration_num/10) ).
+			If passing 'auto', will use 1 / sqrt(1 + int(iteration_num/100) ).
 			Note that the iteration numbers start at zero.
 		fit_intercept : bool
 			Whether to add an intercept to the model parameters.
