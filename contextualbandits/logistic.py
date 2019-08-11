@@ -13,32 +13,32 @@ def _step_size_const(initial_step_size, iteration_num):
 	return initial_step_size
 
 class StochasticLogisticRegression:
-	def __init__(self, reg_param=1e-3, step_size=1e-1, rmsprop_weight=0.9, rmsprop_reg=1e-4, decr_step_size=None, fit_intercept=True, random_state=1):
-		"""
-		Logistic Regression fit in batches to binary labels with either AdaGrad or RMSProp formulae
+	"""
+	Logistic Regression fit in batches to binary labels with either AdaGrad or RMSProp formulae
 
-		Parameters
-		----------
-		reg_param : float
-			Strength of l2 regularization. Note that the loss function has an average log-loss over observations,
-			so the optimal regulatization will likely be a lot smaller than for scikit-learn's (which uses sum instead).
-		step_size : float
-			Initial step size to use. Note that the step might be decreased as iterations increase through function
-			passed in 'decr_step_size'.
-		rmsprop_weight : float(0, 1) or None
-			Weight for old gradients in RMSProp formula. If passing None, will use AdaGrad formula instead.
-		rmsprop_reg : float > 0
-			Regularization for the square root of squared gradient sums.
-		decr_step_size : None, str 'auto', or function(initial_step_size, iteration_number) -> float
-			Function that determines the step size to take at each iteration.
-			If passing None, will use constant step size.
-			If passing 'auto', will use 1 / sqrt(1 + int(iteration_num/100) ).
-			Note that the iteration numbers start at zero.
-		fit_intercept : bool
-			Whether to add an intercept to the model parameters.
-		random_state : int
-			Random seed to use.
-		"""
+	Parameters
+	----------
+	reg_param : float
+		Strength of l2 regularization. Note that the loss function has an average log-loss over observations,
+		so the optimal regulatization will likely be a lot smaller than for scikit-learn's (which uses sum instead).
+	step_size : float
+		Initial step size to use. Note that the step might be decreased as iterations increase through function
+		passed in 'decr_step_size'.
+	rmsprop_weight : float(0, 1) or None
+		Weight for old gradients in RMSProp formula. If passing None, will use AdaGrad formula instead.
+	rmsprop_reg : float > 0
+		Regularization for the square root of squared gradient sums.
+	decr_step_size : None, str 'auto', or function(initial_step_size, iteration_number) -> float
+		Function that determines the step size to take at each iteration.
+		If passing None, will use constant step size.
+		If passing 'auto', will use 1 / sqrt(1 + int(iteration_num/100) ).
+		Note that the iteration numbers start at zero.
+	fit_intercept : bool
+		Whether to add an intercept to the model parameters.
+	random_state : int
+		Random seed to use.
+	"""
+	def __init__(self, reg_param=1e-3, step_size=1e-1, rmsprop_weight=0.9, rmsprop_reg=1e-4, decr_step_size=None, fit_intercept=True, random_state=1):
 		assert reg_param >= 0
 		assert step_size > 0
 		if rmsprop_weight is not None:
