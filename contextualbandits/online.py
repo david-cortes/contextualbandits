@@ -34,6 +34,8 @@ class _BasePolicy:
         if assign_algo:
             self.base_algorithm = base_algorithm
 
+        self.is_fitted = False
+
     def _add_choices(self, nchoices):
         if isinstance(nchoices, int):
             self.nchoices = nchoices
@@ -180,6 +182,7 @@ class _BasePolicy:
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    njobs = self.njobs)
+        self.is_fitted = True
         return self
     
     def partial_fit(self, X, a, r):
@@ -210,6 +213,7 @@ class _BasePolicy:
         if '_oracles' in dir(self):
             X, a, r =_check_fit_input(X, a, r, self.choice_names)
             self._oracles.partial_fit(X, a, r)
+            self.is_fitted = True
             return self
         else:
             return self.fit(X, a, r)
@@ -235,7 +239,19 @@ class _BasePolicy:
             Scores following this policy for each arm.
         """
         X = _check_X_input(X)
+        if not self.is_fitted:
+            raise ValueError("Object has not been fit to data.")
         return self._oracles.decision_function(X)
+
+    def _predict_random_if_unfit(self, X, output_score):
+        warnings.warn("Model object has not been fit to data, predictions will be random.")
+        X = _check_X_input(X)
+        pred = self._name_arms(np.random.randint(self.nchoices, size = X.shape[0]))
+        if not output_score:
+            return pred
+        else:
+            return {"choice" : pred, "score" : np.random.random(size = X.shape[0])}
+
 
 class _BasePolicyWithExploit(_BasePolicy):
     def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method, nsamples, njobs_samples, percentile):
@@ -285,6 +301,9 @@ class _BasePolicyWithExploit(_BasePolicy):
             Actions chosen by the policy. If passing output_score=True, it will be a dictionary
             with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, output_score)
+
         if exploit:
             scores = self.exploit(X)
         else:
@@ -531,9 +550,11 @@ class SeparateClassifiers(_BasePolicy):
             Scores following this policy for each arm.
         """
         X = _check_X_input(X)
+        if not self.is_fitted:
+            raise ValueError("Object has not been fit to data.")
         return self._oracles.predict_proba(X)
     
-    def predict_proba_separate(self,X):
+    def predict_proba_separate(self, X):
         """
         Get the predicted probabilities from each arm from the classifier that predicts it.
         
@@ -552,6 +573,8 @@ class SeparateClassifiers(_BasePolicy):
             Scores following this policy for each arm.
         """
         X = _check_X_input(X)
+        if not self.is_fitted:
+            raise ValueError("Object has not been fit to data.")
         return self._oracles.predict_proba_raw(X)
     
     def predict(self, X, output_score = False):
@@ -572,6 +595,9 @@ class SeparateClassifiers(_BasePolicy):
             Actions chosen by the policy. If passing output_score=True, it will be a dictionary
             with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, output_score)
+
         scores = self.decision_function(X)
         pred = self._name_arms(np.argmax(scores, axis = 1))
 
@@ -673,6 +699,8 @@ class EpsilonGreedy(_BasePolicy):
             Actions chosen by the policy. If passing output_score=True, it will be a dictionary
             with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, output_score)
         scores = self.decision_function(X)
         pred = np.argmax(scores, axis = 1)
         if not exploit:
@@ -889,6 +917,7 @@ class AdaptiveGreedy(_ActivePolicy):
                                    self._force_fit,
                                    force_counters = self.active_choice is not None,
                                    njobs = self.njobs)
+        self.is_fitted = True
         return self
 
     def predict(self, X, exploit = False):
@@ -909,6 +938,8 @@ class AdaptiveGreedy(_ActivePolicy):
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, False)
         return self._name_arms(self._predict(X, exploit))
     
     def _predict(self, X, exploit = False):
@@ -1076,6 +1107,8 @@ class ExploreFirst(_BasePolicy):
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, False)
         return self._name_arms(self._predict(X, exploit))
     
     def _predict(self, X, exploit = False):
@@ -1233,6 +1266,7 @@ class ActiveExplorer(_ActivePolicy):
                                    force_fit = self._force_fit,
                                    force_counters = True,
                                    njobs = self.njobs)
+        self.is_fitted = True
         return self
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
@@ -1257,6 +1291,8 @@ class ActiveExplorer(_ActivePolicy):
         pred : array (n_samples,)
             Actions chosen by the policy.
         """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, False)
         X = _check_X_input(X)
         
         pred = self._oracles.decision_function(X)
@@ -1368,6 +1404,8 @@ class SoftmaxExplorer(_BasePolicy):
             Scores following this policy for each arm.
         """
         X = _check_X_input(X)
+        if not self.is_fitted:
+            raise ValueError("Object has not been fit to data.")
         return self._oracles.predict_proba(X)
     
     def predict(self, X, exploit=False, output_score=False):
@@ -1391,6 +1429,8 @@ class SoftmaxExplorer(_BasePolicy):
             Actions chosen by the policy. If passing output_score=True, it will be a dictionary
             with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, output_score)
         if exploit:
             X = _check_X_input(X)
             return np.argmax(self._oracles.decision_function(X), axis=1)
@@ -1468,6 +1508,7 @@ class LinUCB:
         if not self._ts:
             self.v_sq = self.alpha
             del self.alpha
+        self.is_fitted = False
 
     def drop_arm(self, arm):
         """
@@ -1539,6 +1580,7 @@ class LinUCB:
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self.ndim = X.shape[1]
         Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.nchoices))
+        self.is_fitted = True
         return self
 
     def _fit_single(self, choice, X, a, r):
@@ -1567,7 +1609,7 @@ class LinUCB:
         for n in range(self.nchoices):
             this_action = a == n
             self._oracles[n].partial_fit(X[this_action, :], r[this_action].astype('float64'))
-            
+        self.is_fitted = True  
         return self
     
     def predict(self, X, exploit=False, output_score=False):
@@ -1591,6 +1633,8 @@ class LinUCB:
             Actions chosen by the policy. If passing output_score=True, it will be a dictionary
             with the chosen arm and the score that the arm got following this policy with the classifiers used.
         """
+        if not self.is_fitted:
+            return _BasePolicy._predict_random_if_unfit(self, X, output_score)
         X = _check_X_input(X)
         pred = np.zeros((X.shape[0], self.nchoices))
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(choice, pred, exploit, X) for choice in range(self.nchoices))
