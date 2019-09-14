@@ -250,7 +250,7 @@ class _BasePolicy:
         if not output_score:
             return pred
         else:
-            return {"choice" : pred, "score" : np.random.random(size = X.shape[0])}
+            return {"choice" : pred, "score" : (1.0 / self.nchoices) * np.ones(size = X.shape[0], dtype = "float64")}
 
 
 class _BasePolicyWithExploit(_BasePolicy):
