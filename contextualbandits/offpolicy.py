@@ -93,10 +93,10 @@ class DoublyRobustEstimator:
     
     References
     ----------
-    [1] Dudík, Miroslav, John Langford, and Lihong Li. "Doubly robust policy evaluation and learning."
-        arXiv preprint arXiv:1103.4601 (2011).
-    [2] Dudík, Miroslav, et al. "Doubly robust policy evaluation and optimization."
-        Statistical Science 29.4 (2014): 485-511.
+    .. [1] Dudík, Miroslav, John Langford, and Lihong Li. "Doubly robust policy evaluation and learning."
+           arXiv preprint arXiv:1103.4601 (2011).
+    .. [2] Dudík, Miroslav, et al. "Doubly robust policy evaluation and optimization."
+           Statistical Science 29.4 (2014): 485-511.
     """
     def __init__(self, base_algorithm, reward_estimator, nchoices, method='rovr',
                  handle_invalid=True, c=None, pmin=1e-5, beta_prior=None, smoothing=(1,2), **kwargs_costsens):
@@ -242,8 +242,8 @@ class OffsetTree:
     
     References
     ----------
-    [1] Beygelzimer, Alina, and John Langford. "The offset tree for learning with partial labels."
-        Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining. ACM, 2009.
+    .. [1] Beygelzimer, Alina, and John Langford. "The offset tree for learning with partial labels."
+           Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining. ACM, 2009.
     """
     def __init__(self, base_algorithm, nchoices, c = None, pmin = 1e-5, njobs = -1):
         try:

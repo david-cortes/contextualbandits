@@ -386,9 +386,9 @@ class BootstrappedUCB(_BasePolicyWithExploit):
 
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
-        """
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
+    """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
                  beta_prior='auto', smoothing=None, batch_train=False,
                  assume_unique_reward=False, batch_sample_method='gamma',
@@ -465,10 +465,10 @@ class BootstrappedTS(_BasePolicyWithExploit):
     
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
-    [2] Chapelle, Olivier, and Lihong Li. "An empirical evaluation of thompson sampling."
-        Advances in neural information processing systems. 2011.
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
+    .. [2] Chapelle, Olivier, and Lihong Li. "An empirical evaluation of thompson sampling."
+           Advances in neural information processing systems. 2011.
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
                  batch_train=False, assume_unique_reward=False, batch_sample_method='gamma',
@@ -526,8 +526,8 @@ class SeparateClassifiers(_BasePolicy):
 
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
                  batch_train=False, assume_unique_reward=False, njobs=-1):
@@ -661,10 +661,10 @@ class EpsilonGreedy(_BasePolicy):
     
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
-    [2] Yue, Yisong, et al. "The k-armed dueling bandits problem."
-        Journal of Computer and System Sciences 78.5 (2012): 1538-1556.
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
+    .. [2] Yue, Yisong, et al. "The k-armed dueling bandits problem."
+           Journal of Computer and System Sciences 78.5 (2012): 1538-1556.
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
                  beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
@@ -845,11 +845,10 @@ class AdaptiveGreedy(_ActivePolicy):
     
     References
     ----------
-    [1] Chakrabarti, Deepayan, et al. "Mortal multi-armed bandits."
-        Advances in neural information processing systems. 2009.
-    [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
-    
+    .. [1] Chakrabarti, Deepayan, et al. "Mortal multi-armed bandits."
+           Advances in neural information processing systems. 2009.
+    .. [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35, decay=0.9998,
                  decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
@@ -1076,8 +1075,8 @@ class ExploreFirst(_BasePolicy):
 
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
                  beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
@@ -1218,8 +1217,8 @@ class ActiveExplorer(_ActivePolicy):
 
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
@@ -1368,8 +1367,8 @@ class SoftmaxExplorer(_BasePolicy):
 
     References
     ----------
-    [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
-        arXiv preprint arXiv:1811.04383 (2018).
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
                  beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
@@ -1485,10 +1484,10 @@ class LinUCB:
     
     References
     ----------
-    [1] Chu, Wei, et al. "Contextual bandits with linear payoff functions."
-        Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics. 2011.
-    [2] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
-        Proceedings of the 19th international conference on World wide web. ACM, 2010.
+    .. [1] Chu, Wei, et al. "Contextual bandits with linear payoff functions."
+           Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics. 2011.
+    .. [2] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
+           Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
     def __init__(self, nchoices, alpha = 1.0, njobs = 1):
         self._ts = False
@@ -1680,8 +1679,8 @@ class LinTS(LinUCB):
     
     References
     ----------
-    [1] Agrawal, Shipra, and Navin Goyal. "Thompson sampling for contextual bandits with linear payoffs."
-        International Conference on Machine Learning. 2013.
+    .. [1] Agrawal, Shipra, and Navin Goyal. "Thompson sampling for contextual bandits with linear payoffs."
+           International Conference on Machine Learning. 2013.
     """
     def __init__(self, nchoices, v_sq=1.0, njobs=1):
         self._ts = True
