@@ -368,7 +368,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     batch_sample_method : str, either 'gamma' or 'poisson'
@@ -447,7 +447,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     batch_sample_method : str, either 'gamma' or 'poisson'
@@ -515,7 +515,7 @@ class SeparateClassifiers(_BasePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
@@ -650,7 +650,7 @@ class EpsilonGreedy(_BasePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
@@ -812,7 +812,7 @@ class AdaptiveGreedy(_ActivePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     active_choice : None or str in {'min', 'max', 'weighted'}
@@ -1028,7 +1028,7 @@ class ExploreFirst(_BasePolicy):
     Explore First, a.k.a. Explore-Then-Exploit
     
     Selects random actions for the first N predictions, after which it selects the
-    best arm only according to its estimates.
+    best arm only, according to its estimates.
     
     Parameters
     ----------
@@ -1064,7 +1064,7 @@ class ExploreFirst(_BasePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
@@ -1204,7 +1204,7 @@ class ActiveExplorer(_ActivePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_seed : None or int
@@ -1297,7 +1297,7 @@ class ActiveExplorer(_ActivePolicy):
         pred = self._oracles.decision_function(X)
         if not exploit:
             change_greedy = np.random.random(size=X.shape[0]) <= self.explore_prob
-            if change_greedy.sum() > 0:
+            if np.any(change_greedy):
                 pred[change_greedy, :] = self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
             
             if self.decay is not None:
@@ -1356,7 +1356,7 @@ class SoftmaxExplorer(_BasePolicy):
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
@@ -1729,7 +1729,7 @@ class BayesianUCB(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
@@ -1796,7 +1796,7 @@ class BayesianTS(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to False,
+        Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     njobs : int or None
