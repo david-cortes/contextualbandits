@@ -781,6 +781,7 @@ class _LinUCBnTSSingle:
         if self.Ainv.dtype != np.float64:
             self.Ainv = self.Ainv.astype(np.float64)
         self.b = (y.reshape((-1,1)) * X).sum(axis = 0).reshape((-1,1))
+        self.Ainv_dot_b = self.Ainv.dot(self.b)
 
     def partial_fit(self, X, y):
         if len(X.shape) == 1:
@@ -797,19 +798,20 @@ class _LinUCBnTSSingle:
             self._sherman_morrison_update(x)
 
         self.b += (y.reshape((-1,1)) * X).sum(axis = 0).reshape((-1,1))
+        self.Ainv_dot_b = self.Ainv.dot(self.b)
 
     def predict(self, X, exploit=False):
         if len(X.shape) == 1:
             X = X.reshape((1, -1))
 
         if self.ts:
-            mu = (self.Ainv.dot(self.b)).reshape(-1)
+            mu = (self.Ainv_dot_b).reshape(-1)
             if not exploit:
-                mu = np.random.multivariate_normal(mu, self.alpha * self.Ainv, size=X.shape[0])
+                mu = np.random.multivariate_normal(mu, self.alpha*self.Ainv, size=X.shape[0])
             return (X * mu.reshape((X.shape[0], X.shape[1]))).sum(axis=1)
 
         else:
-            pred = self.Ainv.dot(self.b).T.dot(X.T).reshape(-1)
+            pred = self.Ainv_dot_b.T.dot(X.T).reshape(-1)
 
             if not exploit:
                 return pred
