@@ -1561,7 +1561,7 @@ class LinUCB:
             This object
         """
         arm_name = _BasePolicy._check_new_arm_name(self, arm_name)
-        self._oracles.append(_LinUCBnTSSingle(self.alpha, self._ts))
+        self._oracles.append(_LinUCBnTSSingle(self.alpha, self.lambda_, self._ts))
         _BasePolicy._append_arm(self, arm_name)
         return self
     
@@ -1633,11 +1633,14 @@ class LinUCB:
             This object
         """
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
-        for n in range(self.nchoices):
-            this_action = a == n
-            self._oracles[n].partial_fit(X[this_action, :], r[this_action].astype('float64'))
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                (delayed(self._partial_fit_single)(choice, X, a, r) for choice in range(self.nchoices))
         self.is_fitted = True  
         return self
+
+    def _partial_fit_single(self, choice, X, a, r):
+        this_action = a == choice
+        self._oracles[choice].partial_fit(X[this_action, :], r[this_action].astype('float64'))
     
     def predict(self, X, exploit=False, output_score=False):
         """
