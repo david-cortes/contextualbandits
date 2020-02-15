@@ -1,21 +1,10 @@
 # Contextual Bandits
 
 
-This Python package contains implementations of methods from different papers dealing with the contextual bandit problem, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
+This Python package contains implementations of methods from different papers dealing with contextual bandit problems, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
-The implementations details of the online algorithms here are all described in the paper _Adapting multi-armed bandits policies to contextual bandits scenarios_:
-[https://arxiv.org/abs/1811.04383](https://arxiv.org/abs/1811.04383)
+For details about the implementations, or if you would like to cite this in your work, see [Adapting multi-armed bandits policies to contextual bandits scenarios](https://arxiv.org/abs/1811.04383).
 
-Paper can be cited as
-
-```
-@article{cortesbandits,
-  title={Adapting multi-armed bandits policies to contextual bandits scenarios},
-  author={Cortes, David},
-  journal={arXiv preprint arXiv:1811.04383},
-  year={2018}
-}
-```
 
 ## Installation
 
@@ -81,6 +70,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 * Fixed problems related to Python3 features when running online module in Python 2.7.
 * The online module can now use named arms, as well as add and drop arms from already-initialized objects.
 * The online and off-policy modules can now parallelize computations across arms (also across samples in bootstrapped methods).
+* LinUCB speed has been improved by taking more efficient matrix operation routes.
 
 
 ## Implemented algorithms
