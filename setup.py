@@ -7,7 +7,6 @@ setup(
    'pandas',
    'numpy',
    'scipy',
-   'scikit-learn',
    'pandas',
    'joblib>=0.13'
 ],

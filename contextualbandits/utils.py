@@ -205,7 +205,10 @@ def _extract_regularization(base_algorithm):
     elif base_algorithm.__class__.__name__ == 'StochasticLogisticRegression':
         return base_algorithm.reg_param
     else:
-        raise ValueError("'auto' option only available for 'LogisticRegression', 'SGDClassifier', 'RidgeClassifier', and 'StochasticLogisticRegression' (this package's or stochQN's).")
+        msg  = "'auto' option only available for "
+        msg += "'LogisticRegression', 'SGDClassifier', 'RidgeClassifier', "
+        msg += "and 'StochasticLogisticRegression' (this package's or stochQN's)."
+        raise ValueError(msg)
 
 def _logistic_grad_norm(X, y, pred, base_algorithm):
     coef = base_algorithm.coef_.reshape(-1)

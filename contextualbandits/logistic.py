@@ -1,8 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np, warnings
-from sklearn.linear_model.logistic import _logistic_loss_and_grad
-from sklearn.linear_model import RidgeClassifier
+try:
+	from sklearn.linear_model._logistic import _logistic_loss_and_grad
+	from sklearn.linear_model import RidgeClassifier
+except:
+	msg  = "This module requires library SciKit-Learn, "
+	msg += "please install with e.g. 'pip install scikit-learn'."
+	raise ValueError(msg)
 from contextualbandits.utils import _check_X_input, _check_1d_inp
 
 #### Pre-defined step size sequences
