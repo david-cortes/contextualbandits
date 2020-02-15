@@ -762,7 +762,7 @@ class _LinUCBnTSSingle:
         ## Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1.0 + np.linalg.multi_dot([x.T, Ainv, x]))
         Ainv_x = np.dot(self.Ainv, x)
         coef = -1./(1. + np.dot(x.T, Ainv_x))
-        self.Ainv = blas.dger(alpha=coef, x=Ainv_x, y=np.dot(x.T, self.Ainv), a=self.Ainv, overwrite_a=1)
+        blas.dger(alpha=coef, x=Ainv_x, y=Ainv_x, a=self.Ainv.T, overwrite_a=1)
         ## https://github.com/scipy/scipy/issues/11525
 
 
