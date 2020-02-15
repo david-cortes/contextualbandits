@@ -1460,13 +1460,15 @@ class SoftmaxExplorer(_BasePolicy):
 class LinUCB:
     """
     LinUCB
-    
+
     Note
     ----
-    The formula here is implemented in a loop per observation for both fitting and predicting.
-    The A matrix in the formulas are not inverted after each update, but rather, only their inverse is stored
-    and is updated after each observation using the Sherman-Morrison formula.
-    Thus, updating is quite fast, but there is no speed-up in doing batch updates.
+    Using the 'fit' method will add the whole batch of data and then invert the
+    covariance matrix, while using the 'partial_fit' method will start with a
+    diagonal inverse covariance matrix and update them one-by-one as observations
+    are fit to it. The end result is the same for both, but the scalability is
+    different. For large batches of data, 'fit' is likely to be faster, whereas
+    for small batches of data, 'partial_fit' is likely to be faster.
     
     Parameters
     ----------
@@ -1476,6 +1478,9 @@ class LinUCB:
         custom name.
     alpha : float
         Parameter to control the upper confidence bound (more is higher).
+    lambda_ : float > 0
+        Regularization parameter. References assumed this would always be equal to 1, but this
+        implementation allows to change it,
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1489,21 +1494,25 @@ class LinUCB:
     .. [2] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
            Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
-    def __init__(self, nchoices, alpha = 1.0, njobs = 1):
+    def __init__(self, nchoices, alpha = 1.0, lambda_ = 1.0, njobs = 1):
         self._ts = False
-        self._add_common_lin(alpha, nchoices, njobs)
+        self._add_common_lin(alpha, lambda_, nchoices, njobs)
 
-    def _add_common_lin(self, alpha, nchoices, njobs):
+    def _add_common_lin(self, alpha, lambda_, nchoices, njobs):
         if isinstance(alpha, int):
             alpha = float(alpha)
         assert isinstance(alpha, float)
+        if isinstance(lambda_, int):
+            lambda_ = float(lambda_)
+        assert lambda_ > 0
 
         _BasePolicy._add_choices(self, nchoices)
         _check_constructor_input(_ZeroPredictor(), nchoices)
         self.njobs = _check_njobs(njobs)
         self.alpha = alpha
+        self.lambda_ = lambda_
         self.nchoices = nchoices
-        self._oracles = [_LinUCBnTSSingle(self.alpha, self._ts) for n in range(nchoices)]
+        self._oracles = [_LinUCBnTSSingle(self.alpha, self.lambda_, self._ts) for n in range(nchoices)]
         if not self._ts:
             self.v_sq = self.alpha
             del self.alpha
@@ -1562,6 +1571,15 @@ class LinUCB:
         Overwrites previously fitted coefficients if there were any.
         (See partial_fit for adding more data in batches)
 
+        Note
+        ----
+        Using the 'fit' method will add the whole batch of data and then invert the
+        covariance matrix, while using the 'partial_fit' method will start with a
+        diagonal inverse covariance matrix and update them one-by-one as observations
+        are fit to it. The end result is the same for both, but the scalability is
+        different. For large batches of data, 'fit' is likely to be faster, whereas
+        for small batches of data, 'partial_fit' is likely to be faster.
+
         Parameters
         ----------
         X : array (n_samples, n_features)
@@ -1578,7 +1596,8 @@ class LinUCB:
         """
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
         self.ndim = X.shape[1]
-        Parallel(n_jobs=self.njobs, verbose = 0, require="sharedmem")(delayed(self._fit_single)(choice, X, a, r) for choice in range(self.nchoices))
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                (delayed(self._fit_single)(choice, X, a, r) for choice in range(self.nchoices))
         self.is_fitted = True
         return self
 
@@ -1589,6 +1608,15 @@ class LinUCB:
     def partial_fit(self, X, a, r):
         """"
         Updates each linear model with a new batch of data with actions chosen by this same policy.
+
+        Note
+        ----
+        Using the 'fit' method will add the whole batch of data and then invert the
+        covariance matrix, while using the 'partial_fit' method will start with a
+        diagonal inverse covariance matrix and update them one-by-one as observations
+        are fit to it. The end result is the same for both, but the scalability is
+        different. For large batches of data, 'fit' is likely to be faster, whereas
+        for small batches of data, 'partial_fit' is likely to be faster.
 
         Parameters
         ----------
@@ -1655,13 +1683,15 @@ class LinUCB:
 class LinTS(LinUCB):
     """
     Linear Thompson Sampling
-    
+
     Note
     ----
-    The formula here is implemented in a loop per observation for both fitting and predicting.
-    The B matrix in the formulas are not inverted after each update, but rather, only their inverse is stored
-    and is updated after each observation using the Sherman-Morrison formula.
-    Thus, updating is quite fast, but there is no speed-up in doing batch updates.
+    Using the 'fit' method will add the whole batch of data and then invert the
+    covariance matrix, while using the 'partial_fit' method will start with a
+    diagonal inverse covariance matrix and update them one-by-one as observations
+    are fit to it. The end result is the same for both, but the scalability is
+    different. For large batches of data, 'fit' is likely to be faster, whereas
+    for small batches of data, 'partial_fit' is likely to be faster.
     
     Parameters
     ----------
@@ -1671,6 +1701,9 @@ class LinTS(LinUCB):
         custom name.
     v_sq : float
         Parameter by which to multiply the covariance matrix (more means higher variance).
+    lambda_ : float > 0
+        Regularization parameter. References assumed this would always be equal to 1, but this
+        implementation allows to change it,
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1682,9 +1715,9 @@ class LinTS(LinUCB):
     .. [1] Agrawal, Shipra, and Navin Goyal. "Thompson sampling for contextual bandits with linear payoffs."
            International Conference on Machine Learning. 2013.
     """
-    def __init__(self, nchoices, v_sq=1.0, njobs=1):
+    def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, njobs=1):
         self._ts = True
-        self._add_common_lin(v_sq, nchoices, njobs)
+        self._add_common_lin(v_sq, lambda_, nchoices, njobs)
 
 class BayesianUCB(_BasePolicyWithExploit):
     """
