@@ -1,5 +1,5 @@
-costsensitive
 scikit-learn
 numpy
+scipy
 pandas
 joblib>=0.13

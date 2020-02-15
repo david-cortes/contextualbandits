@@ -2,6 +2,7 @@ import numpy as np, types, warnings, multiprocessing
 from copy import deepcopy
 from joblib import Parallel, delayed
 import pandas as pd
+from scipy.linalg import blas
 
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
@@ -755,9 +756,15 @@ class _LinUCBnTSSingle:
         self.alpha = alpha
         self.ts = ts
 
-    def _sherman_morrison_update(self, Ainv, x):
+    def _sherman_morrison_update(self, x):
         ## x should have shape (n, 1)
-        Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1.0 + np.linalg.multi_dot([x.T, Ainv, x]))
+        ## General idea is this, but this does it in a more efficient way:
+        ## Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1.0 + np.linalg.multi_dot([x.T, Ainv, x]))
+        Ainv_x = np.dot(self.Ainv, x)
+        coef = -1./(1. + np.dot(x.T, Ainv_x))
+        self.Ainv = blas.dger(alpha=coef, x=Ainv_x, y=np.dot(x.T, self.Ainv), a=self.Ainv, overwrite_a=1)
+        ## https://github.com/scipy/scipy/issues/11525
+
 
     def fit(self, X, y):
         if len(X.shape) == 1:
@@ -770,6 +777,8 @@ class _LinUCBnTSSingle:
     def partial_fit(self, X, y):
         if len(X.shape) == 1:
             X = X.reshape((1, -1))
+        if (X.dtype != np.float64):
+            X = X.astype(np.float64)
         if 'Ainv' not in dir(self):
             self.Ainv = np.eye(X.shape[1])
             self.b = np.zeros((X.shape[1], 1))
@@ -778,7 +787,7 @@ class _LinUCBnTSSingle:
             x = X[i, :].reshape((-1, 1))
             r = y[i]
             sumb += r * x
-            self._sherman_morrison_update(self.Ainv, x)
+            self._sherman_morrison_update(x)
 
         self.b += sumb
 
