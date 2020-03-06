@@ -816,7 +816,7 @@ class _LinUCBnTSSingle:
             if not exploit:
                 return pred
             else:
-                pred += (X.dot(self.Ainv) * X).sum(axis=1)
+                pred += self.alpha*np.sqrt( (X.dot(self.Ainv) * X).sum(axis=1) )
 
         return pred
 
