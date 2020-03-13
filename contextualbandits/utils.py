@@ -792,7 +792,7 @@ class _LinUCBnTSSingle:
             self.Ainv = np.eye(X.shape[1], dtype=np.float64, order='C')
             self.b = np.zeros((X.shape[1], 1))
             if self.lambda_ != 1.0:
-                np.fill_diagonal(self.Ainv, self.lambda_)
+                np.fill_diagonal(self.Ainv, 1./self.lambda_)
         for i in range(X.shape[0]):
             x = X[i, :].reshape((-1, 1))
             self._sherman_morrison_update(x)
