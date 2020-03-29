@@ -755,9 +755,10 @@ class _BayesianLogisticRegression:
         return pred.mean(axis = 1)
 
 class _LinUCBnTSSingle:
-    def __init__(self, alpha, lambda_=1.0, ts=False):
+    def __init__(self, alpha, lambda_=1.0, fit_intercept=True, ts=False):
         self.alpha = alpha
         self.lambda_ = lambda_
+        self.fit_intercept = fit_intercept
         self.ts = ts
 
     def _sherman_morrison_update(self, x):
@@ -773,6 +774,8 @@ class _LinUCBnTSSingle:
     def fit(self, X, y):
         if len(X.shape) == 1:
             X = X.reshape((1, -1))
+        if self.fit_intercept:
+            X = np.c_[X, np.ones((X.shape[0], 1))]
         self.Ainv = X.T.dot(X)
         self.Ainv[np.arange(X.shape[1]), np.arange(X.shape[1])] += self.lambda_
         self.Ainv = np.linalg.inv(self.Ainv)
@@ -788,6 +791,8 @@ class _LinUCBnTSSingle:
             X = X.reshape((1, -1))
         if (X.dtype != np.float64):
             X = X.astype(np.float64)
+        if self.fit_intercept:
+            X = np.c_[X, np.ones((X.shape[0], 1))]
         if 'Ainv' not in dir(self):
             self.Ainv = np.eye(X.shape[1], dtype=np.float64, order='C')
             self.b = np.zeros((X.shape[1], 1))
@@ -803,6 +808,8 @@ class _LinUCBnTSSingle:
     def predict(self, X, exploit=False):
         if len(X.shape) == 1:
             X = X.reshape((1, -1))
+        if self.fit_intercept:
+            X = np.c_[X, np.ones((X.shape[0], 1))]
 
         if self.ts:
             mu = (self.Ainv_dot_b).reshape(-1)
