@@ -214,6 +214,9 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update
     
     Parameters
     ----------
+    policy : obj
+        Policy to be evaluated (already fitted to data). Must have a 'predict' method.
+        If it is an online policy, it must also have a 'fit' method.
     X : array (n_samples, n_features)
         Covariates for each observation.
     y_onehot : array (n_samples, n_arms)
