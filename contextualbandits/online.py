@@ -1708,7 +1708,7 @@ class LinTS(LinUCB):
         Parameter by which to multiply the covariance matrix (more means higher variance).
     lambda_ : float > 0
         Regularization parameter. References assumed this would always be equal to 1, but this
-        implementation allows to change it,
+        implementation allows to change it.
     fit_intercept : bool
         Whether to add an intercept term to the coefficients.
     njobs : int or None
