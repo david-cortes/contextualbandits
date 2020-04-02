@@ -2,6 +2,11 @@
 __pycache__/
 *.py[cod]
 .directory
+.*so
+.*o
+.*dll
+.*exe
+.*c
 
 # dist files
 dist/
@@ -9,3 +14,9 @@ dist/
 *.tar.gz
 
 MANIFEST
+
+contextualbandits.egg-info/*
+
+build/*
+contextualbandits/linreg/*.so
+contextualbandits/linreg/*.c

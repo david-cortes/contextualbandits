@@ -6,10 +6,12 @@ from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
             _BetaPredictor, _ZeroPredictor, _OnePredictor, _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
-            _calculate_beta_prior, _BayesianLogisticRegression,\
-            _check_bools, _LinUCBnTSSingle, _add_method_predict_robust, _check_active_inp, \
+            _BayesianLogisticRegression,\
+            _check_bools, _check_refit_buffer, _check_refit_inp, \
+            _add_method_predict_robust, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
-            _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid
+            _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
+            _LinUCB_n_TS_single, _LogisticUCB_n_TS_single
 from joblib import Parallel, delayed
 
 class _BasePolicy:
@@ -17,7 +19,7 @@ class _BasePolicy:
         pass
 
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices,
-            batch_train, assume_unique_reward, assign_algo=True, prior_def_ucb = False):
+            batch_train, refit_buffer, assume_unique_reward, assign_algo=True, prior_def_ucb = False):
         
         if isinstance(base_algorithm, np.ndarray) or base_algorithm.__class__.__name__ == "Series":
             base_algorithm = list(base_algorithm)
@@ -27,12 +29,22 @@ class _BasePolicy:
         self.smoothing = _check_smoothing(smoothing)
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
-        if prior_def_ucb and beta_prior == "auto":
-            beta_prior = ( (5.0 / self.nchoices, 4.0), 2 )
-        self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, 2)
+        self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
 
         if assign_algo:
             self.base_algorithm = base_algorithm
+            if ("warm_start" in dir(self.base_algorithm)) and (self.base_algorithm.warm_start):
+                self.has_warm_start = True
+            else:
+                self.has_warm_start = False
+        else:
+            self.has_warm_start = False
+
+        self.refit_buffer = _check_refit_buffer(refit_buffer, self.batch_train)
+
+        ### For compatibility with the active policies
+        self._force_fit = False
+        self._force_counters = False
 
         self.is_fitted = False
 
@@ -84,6 +96,7 @@ class _BasePolicy:
         drop_ix = self._get_drop_ix(arm_name)
         self._oracles._drop_arm(drop_ix)
         self._drop_ix(drop_ix)
+        self.has_warm_start = False
         return self
 
     def _get_drop_ix(self, arm_name):
@@ -108,7 +121,9 @@ class _BasePolicy:
         self.nchoices -= 1
         self.choice_names = np.r_[self.choice_names[:drop_ix], self.choice_names[drop_ix + 1:]]
 
-    def add_arm(self, arm_name = None, fitted_classifier = None, n_w_req = 0, n_wo_rew = 0):
+    def add_arm(self, arm_name = None, fitted_classifier = None,
+                n_w_req = 0, n_wo_rew = 0,
+                refit_buffer_X = None, refit_buffer_r = None):
         """
         Adds a new arm to the pool of choices
 
@@ -125,6 +140,12 @@ class _BasePolicy:
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
             Number of trials/rounds without rewards coming from this arm (only used when using a beta prior or smoothing).
+        refit_buffer_X : array(m, n) or None
+            Refit buffer of 'X' data to use for the new arm. Ignored when using
+            'batch_train=False' or 'refit_buffer=None'.
+        refit_buffer_y : array(m,) or None
+            Refit buffer of rewards data to use for the new arm. Ignored when using
+            'batch_train=False' or 'refit_buffer=None'.
 
         Returns
         -------
@@ -135,8 +156,11 @@ class _BasePolicy:
         assert isinstance(n_wo_rew, int)
         assert n_w_req >= 0
         assert n_wo_rew >= 0
+        refit_buffer_X, refit_buffer_r = \
+            _check_refit_inp(refit_buffer_X, refit_buffer_r, self.refit_buffer)
         arm_name = self._check_new_arm_name(arm_name)
-        self._oracles._spawn_arm(fitted_classifier, n_w_req, n_wo_rew)
+        self._oracles._spawn_arm(fitted_classifier, n_w_req, n_wo_rew,
+                                 refit_buffer_X, refit_buffer_r)
         self._append_arm(arm_name)
         return self
 
@@ -155,7 +179,7 @@ class _BasePolicy:
             self.choice_names = np.r_[self.choice_names, np.array(arm_name).reshape((1,))]
         self.nchoices += 1
 
-    def fit(self, X, a, r):
+    def fit(self, X, a, r, warm_start=False):
         """
         Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
 
@@ -167,6 +191,18 @@ class _BasePolicy:
             Arms or actions that were chosen for each observations.
         r : array (n_samples), {0,1}
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
+        warm_start : bool
+            Whether to use the results of previous calls to 'fit' as a start
+            for fitting to the 'X' data passed here. This will only be available
+            if the base classifier has a property ``warm_start`` too and that
+            property is also set to 'True'. You can double-check that it's
+            recognized as such by checking this object's property
+            ``has_warm_start``. Passing 'True' when the classifier doesn't
+            support warm start despite having the property might slow down
+            things.
+            Dropping arms will make this functionality unavailable.
+            This options is not available for 'BootstrappedUCB',
+            nor for 'BootstrappedTS'.
 
         Returns
         -------
@@ -174,6 +210,7 @@ class _BasePolicy:
             This object
         """
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
+        use_warm = warm_start and self.has_warm_start and self.is_fitted
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
                                    self.nchoices,
@@ -181,6 +218,10 @@ class _BasePolicy:
                                    self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
+                                   refit_buffer = self.refit_buffer,
+                                   force_fit = self._force_fit,
+                                   force_counters = self._force_counters,
+                                   prev_ovr = self._oracles if use_warm else None,
                                    njobs = self.njobs)
         self.is_fitted = True
         return self
@@ -192,7 +233,8 @@ class _BasePolicy:
         Note
         ----
         In order to use this method, the base classifier must have a 'partial_fit' method,
-        such as 'sklearn.linear_model.SGDClassifier'.
+        such as 'sklearn.linear_model.SGDClassifier'. This method is not available
+        for 'LogisticUCB', nor for 'LogisticTS'.
 
         Parameters
         ----------
@@ -277,7 +319,7 @@ class _BasePolicyWithExploit(_BasePolicy):
                 self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
                 )
 
-    def exploit(self, X):
+    def _exploit(self, X):
         return self._oracles.exploit(X)
 
     def predict(self, X, exploit = False, output_score = False):
@@ -305,7 +347,7 @@ class _BasePolicyWithExploit(_BasePolicy):
             return self._predict_random_if_unfit(X, output_score)
 
         if exploit:
-            scores = self.exploit(X)
+            scores = self._exploit(X)
         else:
             scores = self.decision_function(X)
         pred = self._name_arms(np.argmax(scores, axis = 1))
@@ -367,8 +409,21 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     batch_sample_method : str, either 'gamma' or 'poisson'
@@ -390,12 +445,14 @@ class BootstrappedUCB(_BasePolicyWithExploit):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
-                 beta_prior='auto', smoothing=None, batch_train=False,
+                 beta_prior='auto', smoothing=None, batch_train=False, refit_buffer=None,
                  assume_unique_reward=False, batch_sample_method='gamma',
-                 njobs_arms=1, njobs_samples=-1):
+                 njobs_arms=-1, njobs_samples=1):
         assert (percentile >= 0) and (percentile <= 100)
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms, nchoices,
-                                batch_train, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
+                                nchoices, batch_train, refit_buffer,
+                                assume_unique_reward, assign_algo = False,
+                                prior_def_ucb = True)
         self.percentile = percentile
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, self.percentile)
 
@@ -446,6 +503,19 @@ class BootstrappedTS(_BasePolicyWithExploit):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -471,18 +541,191 @@ class BootstrappedTS(_BasePolicyWithExploit):
            Advances in neural information processing systems. 2011.
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False, batch_sample_method='gamma',
-                 njobs_arms=1, njobs_samples=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms, nchoices,
-                                batch_train, assume_unique_reward, assign_algo=False)
+                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
+                 batch_sample_method='gamma',
+                 njobs_arms=-1, njobs_samples=1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
+                                nchoices, batch_train, refit_buffer,
+                                assume_unique_reward, assign_algo=False)
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, None)
+
+class LogisticUCB(_BasePolicyWithExploit):
+    """
+    Logistic Regression with Confidence Interval
+
+    Logistic regression classifier which constructs an upper bound on the
+    predicted probabilities through a confidence interval calculated from
+    the variance-covariance matrix of the predictors.
+
+    Note
+    ----
+    This strategy is implemented for comparison purposes only and it's not
+    recommended to rely on it, particularly not for large datasets.
+
+    Note
+    ----
+    This strategy does not support fitting the data in batches ('partial_fit'
+    will not be available), nor does it support using any other classifier.
+    See 'BootstrappedUCB' for a more generalizable version.
+
+    Note
+    ----
+    This strategy requires each fitted classifier to store a square matrix with
+    dimension equal to the number of features. Thus, memory consumption can grow
+    very high with this method.
+
+    Parameters
+    ----------
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
+    percentile : int [0,100]
+        Percentile of the confidence interval to take.
+    fit_intercept : bool
+        Whether to add an intercept term to the models.
+    lambda_ : float
+        Strenght of the L2 regularization. Must be greater than zero.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((5/nchoices, 4), 2)
+        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
+        than for other methods.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
+        want to define a class that embeds it with some recalibration built-in.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to True,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
+
+    References
+    ----------
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
+    """
+    def __init__(self, nchoices, percentile=95, fit_intercept=True, lambda_=1.0,
+                 beta_prior='auto', smoothing=None,
+                 assume_unique_reward=False,
+                 njobs=-1):
+        assert (percentile >= 0) and (percentile <= 100)
+        assert lambda_ > 0.
+        base = _LogisticUCB_n_TS_single(lambda_=float(lambda_),
+                                        fit_intercept=fit_intercept,
+                                        alpha=float(percentile) / 100.,
+                                        ts=False)
+        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+                                False, None, assume_unique_reward, assign_algo = True,
+                                prior_def_ucb = True)
+        self.percentile = percentile
+
+class LogisticTS(_BasePolicyWithExploit):
+    """
+    Logistic Regression with Thompson Sampling
+
+    Logistic regression classifier which samples its coefficients using
+    the the variance-covariance matrix of the predictors.
+
+    Note
+    ----
+    This strategy is implemented for comparison purposes only and it's not
+    recommended to rely on it, particularly not for large datasets.
+
+    Note
+    ----
+    This strategy does not support fitting the data in batches ('partial_fit'
+    will not be available), nor does it support using any other classifier.
+    See 'BootstrappedTS' for a more generalizable version.
+
+    Note
+    ----
+    This strategy requires each fitted model to store a square matrix with
+    dimension equal to the number of features. Thus, memory consumption can grow
+    very high with this method.
+
+    Note
+    ----
+    Be aware that sampling coefficients is an operation that scales poorly with
+    the number of columns/features/variables. For wide datasets, it might be
+    a lot slower than a bootstrapped approach.
+
+    Parameters
+    ----------
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
+    multiplier : float
+        Multiplier for the covariance matrix. Pass 1 to take it as-is.
+    fit_intercept : bool
+        Whether to add an intercept term to the models.
+    lambda_ : float
+        Strenght of the L2 regularization. Must be greater than zero.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((5/nchoices, 4), 2)
+        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
+        than for other methods.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
+        want to define a class that embeds it with some recalibration built-in.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to True,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
+        and if these have multi-threading enabled, it might result in a slow-down
+        as both functions compete for available threads.
+
+    References
+    ----------
+    .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
+           arXiv preprint arXiv:1811.04383 (2018).
+    """
+    def __init__(self, nchoices, multiplier=1.0, fit_intercept=True, lambda_=1.0,
+                 beta_prior='auto', smoothing=None,
+                 assume_unique_reward=False,
+                 njobs=-1):
+        warnings.warn("This class is experimental. Not recommended to rely on it.")
+        assert lambda_ > 0.
+        assert multiplier > 0.
+        base = _LogisticUCB_n_TS_single(lambda_=lambda_,
+                                        fit_intercept=fit_intercept,
+                                        alpha=0.,
+                                        m=multiplier,
+                                        ts=True)
+        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+                                False, None, assume_unique_reward, assign_algo = True,
+                                prior_def_ucb = False)
 
 class SeparateClassifiers(_BasePolicy):
     """
     Separate Clasifiers per arm
     
     Fits one classifier per arm using only the data on which that arm was chosen.
-    Predicts as One-Vs-Rest.
+    Predicts as One-Vs-Rest, plus the usual metaheuristics from ``beta_prior``
+    and ``smoothing``.
     
     Parameters
     ----------
@@ -514,6 +757,19 @@ class SeparateClassifiers(_BasePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -530,9 +786,10 @@ class SeparateClassifiers(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
-                 batch_train=False, assume_unique_reward=False, njobs=-1):
+                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
+                 njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward)
+                                batch_train, refit_buffer, assume_unique_reward)
     
     def decision_function_std(self, X):
         """
@@ -649,6 +906,19 @@ class EpsilonGreedy(_BasePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -667,9 +937,10 @@ class EpsilonGreedy(_BasePolicy):
            Journal of Computer and System Sciences 78.5 (2012): 1538-1556.
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
-                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+                 beta_prior='auto', smoothing=None, batch_train=False,
+                 refit_buffer=None, assume_unique_reward=False, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward)
+                                batch_train, refit_buffer, assume_unique_reward)
         assert (explore_prob>0) and (explore_prob<1)
         if decay is not None:
             assert (decay>0) and (decay<1)
@@ -723,10 +994,17 @@ class _ActivePolicy(_BasePolicy):
     def _crit_active(self, X, pred, grad_crit):
         for choice in range(self.nchoices):
             if self._oracles.should_calculate_grad(choice) or self._force_fit:
-                grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
+                if (self._get_grad_norms == _get_logistic_grads_norms) and ("coef_" not in dir(self._oracles.algos[choice])):
+                    grad_norms = \
+                        self._rand_grad_norms(X,
+                                              self._oracles.get_n_pos(choice),
+                                              self._oracles.get_n_neg(choice))
+                else:
+                    grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
             else:
                 grad_norms = self._rand_grad_norms(X,
-                    self._oracles.get_n_pos(choice), self._oracles.get_n_neg(choice))
+                                                   self._oracles.get_n_pos(choice),
+                                                   self._oracles.get_n_neg(choice))
 
             if grad_crit == 'min':
                 pred[:, choice] = grad_norms.min(axis = 1)
@@ -811,6 +1089,19 @@ class AdaptiveGreedy(_ActivePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -823,8 +1114,9 @@ class AdaptiveGreedy(_ActivePolicy):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (with log loss), and 'RidgeClassifier';
-        or with this package's or stochQN's 'StochasticLogisticRegression'.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
+        with stochQN's 'StochasticLogisticRegression';
+        and with this package's 'LinearRegression'.
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
@@ -852,10 +1144,10 @@ class AdaptiveGreedy(_ActivePolicy):
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35, decay=0.9998,
                  decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False,
+                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
                  active_choice=None, f_grad_norm='auto', case_one_class='auto', njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward)
+                                batch_train, refit_buffer, assume_unique_reward)
         
         assert isinstance(window_size, int)
         if percentile is not None:
@@ -883,41 +1175,8 @@ class AdaptiveGreedy(_ActivePolicy):
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
-        else:
-            self._force_fit = False
         self.active_choice = active_choice
-    
-    def fit(self, X, a, r):
-        """
-        Fits the base algorithm (one per class) to partially labeled data.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            This object
-        """
-        X, a, r = _check_fit_input(X, a, r, self.choice_names)
-        self._oracles = _OneVsRest(self.base_algorithm,
-                                   X, a, r,
-                                   self.nchoices,
-                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train,
-                                   self._force_fit,
-                                   force_counters = self.active_choice is not None,
-                                   njobs = self.njobs)
-        self.is_fitted = True
-        return self
+        self._force_counters = self.active_choice is not None
 
     def predict(self, X, exploit = False):
         """
@@ -1063,6 +1322,19 @@ class ExploreFirst(_BasePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1079,9 +1351,10 @@ class ExploreFirst(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
-                 beta_prior=None, smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+                 beta_prior=None, smoothing=None, batch_train=False,
+                 refit_buffer=None, assume_unique_reward=False, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward)
+                                batch_train, refit_buffer, assume_unique_reward)
         
         assert explore_rounds>0
         assert isinstance(explore_rounds, int)
@@ -1151,7 +1424,7 @@ class ActiveExplorer(_ActivePolicy):
     probability, or taking the maximum or minimum), would produce on each model that
     predicts a class, given the current coefficients for that model. This of course requires
     being able to calculate gradients - package comes with pre-defined gradient functions for
-    logistic regression, and allows passing custom functions for others.
+    linear and logistic regression, and allows passing custom functions for others.
     
     Parameters
     ----------
@@ -1165,8 +1438,9 @@ class ActiveExplorer(_ActivePolicy):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
-        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
-        or with this package's or stochQN's 'StochasticLogisticRegression'.
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
+        with stochQN's 'StochasticLogisticRegression';
+        and with this package's 'LinearRegression'.
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
@@ -1203,6 +1477,19 @@ class ActiveExplorer(_ActivePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1222,10 +1509,11 @@ class ActiveExplorer(_ActivePolicy):
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
-                 batch_train=False, assume_unique_reward=False, random_seed=None, njobs=-1):
+                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
+                 random_seed=None, njobs=-1):
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward, assign_algo=False)
+                                batch_train, refit_buffer, assume_unique_reward, assign_algo=False)
 
         if self.batch_train:
             base_algorithm = _add_method_predict_robust(base_algorithm)
@@ -1235,38 +1523,7 @@ class ActiveExplorer(_ActivePolicy):
         assert (explore_prob > 0) and (explore_prob < 1)
         self.explore_prob = explore_prob
         self.decay = decay
-    
-    def fit(self, X, a, r):
-        """
-        Fits logistic regression (one per class) to partially labeled data,
-        with actions chosen by this same policy.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            This object
-        """
-        self._oracles = _OneVsRest(self.base_algorithm,
-                                   X, a, r,
-                                   self.nchoices,
-                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
-                                   self.smoothing,
-                                   self.assume_unique_reward,
-                                   self.batch_train,
-                                   force_fit = self._force_fit,
-                                   force_counters = True,
-                                   njobs = self.njobs)
-        self.is_fitted = True
-        return self
+        self._force_counters = True
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
         """
@@ -1355,6 +1612,19 @@ class SoftmaxExplorer(_BasePolicy):
         Whether the base algorithm will be fit to the data in batches as it comes (online),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1371,9 +1641,10 @@ class SoftmaxExplorer(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
-                 beta_prior='auto', smoothing=None, batch_train=False, assume_unique_reward=False, njobs=-1):
+                 beta_prior='auto', smoothing=None, batch_train=False, refit_buffer=None,
+                 assume_unique_reward=False, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, assume_unique_reward)
+                                batch_train, refit_buffer, assume_unique_reward)
 
         if multiplier is not None:
             if isinstance(multiplier, int):
@@ -1457,18 +1728,20 @@ class SoftmaxExplorer(_BasePolicy):
         chosen[i] = np.random.choice(self.nchoices, p = pred[i])
 
 
-class LinUCB:
+class LinUCB(_BasePolicyWithExploit):
     """
     LinUCB
 
     Note
     ----
-    Using the 'fit' method will add the whole batch of data and then invert the
-    covariance matrix, while using the 'partial_fit' method will start with a
-    diagonal inverse covariance matrix and update them one-by-one as observations
-    are fit to it. The end result is the same for both, but the scalability is
-    different. For large batches of data, 'fit' is likely to be faster, whereas
-    for small batches of data, 'partial_fit' is likely to be faster.
+    This strategy requires each fitted model to store a square matrix with
+    dimension equal to the number of features. Thus, memory consumption can grow
+    very high with this method.
+
+    Note
+    ----
+    The 'X' data (covariates) should ideally be centered before passing them
+    to 'fit', 'partial_fit', 'predict'.
     
     Parameters
     ----------
@@ -1483,6 +1756,35 @@ class LinUCB:
         implementation allows to change it.
     fit_intercept : bool
         Whether to add an intercept term to the coefficients.
+    use_float : bool
+        Whether to use C 'float' type for the required matrices. If passing 'False',
+        will use C 'double'. Be aware that memory usage for this model can grow
+        very large.
+    method : str, one of 'chol' or 'sm'
+        Method used to fit the model. Options are:
+
+        ``'chol'``:
+            Uses the Cholesky decomposition to solve the linear system from the
+            least-squares closed-form each time 'fit' or 'partial_fit' is called.
+            This is likely to be faster when fitting the model to a large number
+            of observations at once, and is able to better exploit multi-threading.
+        ``'sm'``:
+            Starts with an inverse diagonal matrix and updates it as each
+            new observation comes using the Sherman-Morrison formula, thus
+            never explicitly solving the linear system, nor needing to calculate
+            a matrix inverse. This is likely to be faster when fitting the model
+            to small batches of observations. Be aware that with this method, it
+            will add regularization to the intercept if passing 'fit_intercept=True'.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((5/nchoices, 4), 2)
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to True,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1496,207 +1798,53 @@ class LinUCB:
     .. [2] Li, Lihong, et al. "A contextual-bandit approach to personalized news article recommendation."
            Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
-    def __init__(self, nchoices, alpha = 1.0, lambda_ = 1.0, fit_intercept=True, njobs = 1):
+    def __init__(self, nchoices, alpha=1.0, lambda_=1.0, fit_intercept=True,
+                 use_float=True, method="sm",
+                 beta_prior=None,
+                 assume_unique_reward=False,
+                 njobs = 1):
         self._ts = False
-        self._add_common_lin(alpha, lambda_, fit_intercept, nchoices, njobs)
+        self._add_common_lin(alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs)
+        base = _LinUCB_n_TS_single(alpha=self.alpha, lambda_=self.lambda_,
+                                   fit_intercept=self.fit_intercept,
+                                   use_float=self.use_float, method=self.method,
+                                   ts=False)
+        self._add_common_params(base, beta_prior, None, njobs, nchoices,
+                                True, None, assume_unique_reward, assign_algo = True,
+                                prior_def_ucb = True)
 
-    def _add_common_lin(self, alpha, lambda_, fit_intercept, nchoices, njobs):
+    def _add_common_lin(self, alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs):
         if isinstance(alpha, int):
             alpha = float(alpha)
         assert isinstance(alpha, float)
         if isinstance(lambda_, int):
             lambda_ = float(lambda_)
-        assert lambda_ > 0
+        assert lambda_ >= 0.
+        assert method in ["chol", "sm"]
 
-        _BasePolicy._add_choices(self, nchoices)
-        _check_constructor_input(_ZeroPredictor(), nchoices)
-        self.njobs = _check_njobs(njobs)
         self.alpha = alpha
         self.lambda_ = lambda_
         self.fit_intercept = bool(fit_intercept)
-        self.nchoices = nchoices
-        self._oracles = [_LinUCBnTSSingle(self.alpha, self.lambda_, self.fit_intercept, self._ts) for n in range(nchoices)]
-        if not self._ts:
+        self.use_float = bool(use_float)
+        self.method = method
+        if self._ts:
             self.v_sq = self.alpha
             del self.alpha
-        self.is_fitted = False
-
-    def drop_arm(self, arm):
-        """
-        Drop an arm/choice
-
-        Drops (removes/deletes) an arm from the set of available choices to the policy.
-
-        Note
-        ----
-        The available arms, if named, are stored in attribute 'choice_names'.
-        
-        Parameters
-        ----------
-        arm_name : int or object
-            Arm to drop. If passing an integer, will drop at that index (starting at zero). Otherwise,
-            will drop the arm matching this name (argument must be of the same type as the individual entries
-            passed to 'nchoices' in the initialization).
-
-        Returns
-        -------
-        self : object
-            This object
-        """
-        drop_ix = _BasePolicy._get_drop_ix(self, arm_name)
-        del self._oracles[drop_ix]
-        _BasePolicy._drop_ix(self, drop_ix)
-        return self
-
-    def add_arm(self, arm_name = None):
-        """
-        Adds a new arm to the pool of choices
-
-        Parameters
-        ----------
-        arm_name : object
-            Name for this arm. Only applicable when using named arms. If None, will use the name of the last
-            arm plus 1 (will only work when the names are integers).
-
-        Returns
-        -------
-        self : object
-            This object
-        """
-        arm_name = _BasePolicy._check_new_arm_name(self, arm_name)
-        self._oracles.append(_LinUCBnTSSingle(self.alpha, self.lambda_, self._ts))
-        _BasePolicy._append_arm(self, arm_name)
-        return self
-    
-    def fit(self, X, a, r):
-        """"
-        Fits one linear model for the first time to partially labeled data.
-        Overwrites previously fitted coefficients if there were any.
-        (See partial_fit for adding more data in batches)
-
-        Note
-        ----
-        Using the 'fit' method will add the whole batch of data and then invert the
-        covariance matrix, while using the 'partial_fit' method will start with a
-        diagonal inverse covariance matrix and update them one-by-one as observations
-        are fit to it. The end result is the same for both, but the scalability is
-        different. For large batches of data, 'fit' is likely to be faster, whereas
-        for small batches of data, 'partial_fit' is likely to be faster.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            This object
-        """
-        X, a, r = _check_fit_input(X, a, r, self.choice_names)
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._fit_single)(choice, X, a, r) for choice in range(self.nchoices))
-        self.is_fitted = True
-        return self
-
-    def _fit_single(self, choice, X, a, r):
-        this_action = a == choice
-        self._oracles[choice].fit(X[this_action, :], r[this_action].astype('float64'))
-                
-    def partial_fit(self, X, a, r):
-        """"
-        Updates each linear model with a new batch of data with actions chosen by this same policy.
-
-        Note
-        ----
-        Using the 'fit' method will add the whole batch of data and then invert the
-        covariance matrix, while using the 'partial_fit' method will start with a
-        diagonal inverse covariance matrix and update them one-by-one as observations
-        are fit to it. The end result is the same for both, but the scalability is
-        different. For large batches of data, 'fit' is likely to be faster, whereas
-        for small batches of data, 'partial_fit' is likely to be faster.
-
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            Matrix of covariates for the available data.
-        a : array (n_samples), int type
-            Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
-            Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-
-        Returns
-        -------
-        self : obj
-            This object
-        """
-        X, a, r = _check_fit_input(X, a, r, self.choice_names)
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._partial_fit_single)(choice, X, a, r) for choice in range(self.nchoices))
-        self.is_fitted = True  
-        return self
-
-    def _partial_fit_single(self, choice, X, a, r):
-        this_action = a == choice
-        self._oracles[choice].partial_fit(X[this_action, :], r[this_action].astype('float64'))
-    
-    def predict(self, X, exploit=False, output_score=False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-        output_score : bool
-            Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
-            
-        Returns
-        -------
-        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
-            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
-            with the chosen arm and the score that the arm got following this policy with the classifiers used.
-        """
-        if not self.is_fitted:
-            return _BasePolicy._predict_random_if_unfit(self, X, output_score)
-        X = _check_X_input(X)
-        pred = np.zeros((X.shape[0], self.nchoices))
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(choice, pred, exploit, X) for choice in range(self.nchoices))
-
-        if output_score:
-            score_max = np.max(pred, axis=1)
-        pred = _BasePolicy._name_arms(self, np.argmax(pred, axis = 1))
-        if not output_score:
-            return pred
-        else:
-            return {"choice" : pred, "score" : score_max}
-
-    def _predict(self, choice, pred, exploit, X):
-        if exploit:
-            pred[:, choice] = self._oracles[choice].exploit(X)
-        else:
-            pred[:, choice] = self._oracles[choice].predict(X)
 
 class LinTS(LinUCB):
     """
-    Linear Thompson Sampling
+    LinUCB
 
     Note
     ----
-    Using the 'fit' method will add the whole batch of data and then invert the
-    covariance matrix, while using the 'partial_fit' method will start with a
-    diagonal inverse covariance matrix and update them one-by-one as observations
-    are fit to it. The end result is the same for both, but the scalability is
-    different. For large batches of data, 'fit' is likely to be faster, whereas
-    for small batches of data, 'partial_fit' is likely to be faster.
+    This strategy requires each fitted model to store a square matrix with
+    dimension equal to the number of features. Thus, memory consumption can grow
+    very high with this method.
+
+    Note
+    ----
+    The 'X' data (covariates) should ideally be centered before passing them
+    to 'fit', 'partial_fit', 'predict'.
     
     Parameters
     ----------
@@ -1711,6 +1859,35 @@ class LinTS(LinUCB):
         implementation allows to change it.
     fit_intercept : bool
         Whether to add an intercept term to the coefficients.
+    use_float : bool
+        Whether to use C 'float' type for the required matrices. If passing 'False',
+        will use C 'double'. Be aware that memory usage for this model can grow
+        very large.
+    method : str, one of 'chol' or 'sm'
+        Method used to fit the model. Options are:
+
+        ``'chol'``:
+            Uses the Cholesky decomposition to solve the linear system from the
+            least-squares closed-form each time 'fit' or 'partial_fit' is called.
+            This is likely to be faster when fitting the model to a large number
+            of observations at once, and is able to better exploit multi-threading.
+        ``'sm'``:
+            Starts with an inverse diagonal matrix and updates it as each
+            new observation comes using the Sherman-Morrison formula, thus
+            never explicitly solving the linear system, nor needing to calculate
+            a matrix inverse. This is likely to be faster when fitting the model
+            to small batches of observations. Be aware that with this method, it
+            will add regularization to the intercept if passing 'fit_intercept=True'.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((3/nchoices, 4), 2)
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to True,
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1719,12 +1896,24 @@ class LinTS(LinUCB):
     
     References
     ----------
-    .. [1] Agrawal, Shipra, and Navin Goyal. "Thompson sampling for contextual bandits with linear payoffs."
+    .. [1] Agrawal, Shipra, and Navin Goyal.
+           "Thompson sampling for contextual bandits with linear payoffs."
            International Conference on Machine Learning. 2013.
     """
-    def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, fit_intercept=True, njobs=1):
+    def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, fit_intercept=True,
+                 use_float=True, method="sm",
+                 beta_prior=None,
+                 assume_unique_reward=False,
+                 njobs = 1):
         self._ts = True
-        self._add_common_lin(v_sq, lambda_, fit_intercept, nchoices, njobs)
+        self._add_common_lin(v_sq, lambda_, fit_intercept, use_float, method, nchoices, njobs)
+        base = _LinUCB_n_TS_single(alpha=self.v_sq, lambda_=self.lambda_,
+                                   fit_intercept=self.fit_intercept,
+                                   use_float=self.use_float, method=self.method,
+                                   ts=True)
+        self._add_common_params(base, beta_prior, None, njobs, nchoices,
+                                True, None, assume_unique_reward, assign_algo = True,
+                                prior_def_ucb = False)
 
 class BayesianUCB(_BasePolicyWithExploit):
     """
@@ -1736,7 +1925,8 @@ class BayesianUCB(_BasePolicyWithExploit):
     ----
     The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
     This is a very, very slow implementation, and will probably take at least two
-    orders or magnitude more to fit compared to other methods.
+    orders or magnitude more to fit compared to other methods. It's not advised
+    to use it unless having a very good GPU that PyMC3 could use.
     
     Parameters
     ----------
@@ -1779,13 +1969,15 @@ class BayesianUCB(_BasePolicyWithExploit):
         as both functions compete for available threads.
     """
     def __init__(self, nchoices, percentile=80, method='advi', n_samples=20, n_iter='auto',
-                 beta_prior='auto', smoothing=None, assume_unique_reward=False, njobs=1):
-
+                 beta_prior='auto', smoothing=None,
+                 assume_unique_reward=False, njobs=1):
+        warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
+        ## TODO: add a 'partial_fit' with stochastic variational inference.
         self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
-                                False, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
+                                False, None, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
         assert (percentile >= 0) and (percentile <= 100)
         self.percentile = percentile
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
@@ -1807,7 +1999,8 @@ class BayesianTS(_BasePolicyWithExploit):
     ----
     The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
     This is a very, very slow implementation, and will probably take at least two
-    orders or magnitude more to fit compared to other methods.
+    orders or magnitude more to fit compared to other methods. It's not advised
+    to use it unless having a very good GPU that PyMC3 could use.
     
     Parameters
     ----------
@@ -1846,13 +2039,16 @@ class BayesianTS(_BasePolicyWithExploit):
         as both functions compete for available threads.
     """
     def __init__(self, nchoices, method='advi', n_samples=20, n_iter='auto',
-                 beta_prior='auto', smoothing=None, assume_unique_reward=False, njobs=1):
+                 beta_prior='auto', smoothing=None,
+                 assume_unique_reward=False, njobs=1):
+        warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
 
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
+        ## TODO: add a 'partial_fit' with stochastic variational inference.
         self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
-                                False, assume_unique_reward, assign_algo=False)
+                                False, None, assume_unique_reward, assign_algo=False)
         self.nchoices = nchoices
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method

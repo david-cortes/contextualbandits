@@ -3,6 +3,10 @@ from copy import deepcopy
 from joblib import Parallel, delayed
 import pandas as pd
 from scipy.linalg import blas
+from scipy.stats import norm as norm_dist
+from scipy.sparse import issparse, isspmatrix_csr, csr_matrix
+from sklearn.linear_model import LogisticRegression
+from .linreg import LinearRegression, _wrapper_double, _wrapper_float
 
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
@@ -60,11 +64,19 @@ def _decision_function_w_sigmoid(self, X):
 def _decision_function_w_sigmoid_from_predict(self, X):
     return self.predict(X).reshape(-1)
 
-def _calculate_beta_prior(nchoices):
-    return (3.0 / nchoices, 4)
-
 def _check_bools(batch_train=False, assume_unique_reward=False):
     return bool(batch_train), bool(assume_unique_reward)
+
+def _check_refit_buffer(refit_buffer, batch_train):
+    if not batch_train:
+        refit_buffer = None
+    if refit_buffer == 0:
+        refit_buffer = None
+    if refit_buffer is not None:
+        assert refit_buffer > 0
+        if isinstance(refit_buffer, float):
+            refit_buffer = int(refit_buffer)
+    return refit_buffer
 
 def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
     if isinstance(base_algorithm, list):
@@ -90,9 +102,12 @@ def _check_njobs(njobs):
     return njobs
 
 
-def _check_beta_prior(beta_prior, nchoices, default_b):
+def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
     if beta_prior == 'auto':
-        out = (_calculate_beta_prior(nchoices), default_b)
+        if not for_ucb:
+            out = ( (3.0 / float(nchoices), 4.0), 2 )
+        else:
+            out = ( (5.0 / float(nchoices), 4.0), 2 )
     elif beta_prior is None:
         out = ((1.0,1.0), 0)
     else:
@@ -195,6 +210,24 @@ def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
         self._rand_grad_norms = case_one_class
     self.case_one_class = case_one_class
 
+def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
+    if (refit_buffer_X is not None) or (refit_buffer_y is not None):
+        if not refit_buffer:
+            msg  = "Can only pass 'refit_buffer_X' and 'refit_buffer_r' "
+            msg += "when using 'refit_buffer'."
+            raise ValueError(msg)
+        if (refit_buffer_X is None) or (refit_buffer_y is None):
+            msg  = "'refit_buffer_X' and 'refit_buffer_y "
+            msg += "must be passed in conjunction."
+            raise ValueError(msg)
+        refit_buffer_X = _check_X_input(refit_buffer_X)
+        refit_buffer_r = _check_1d_inp(refit_buffer_r)
+        assert refit_buffer_X.shape[0] == refit_buffer_r.shape[0]
+        if refit_buffer_X.shape[0] == 0:
+            refit_buffer_X = None
+            refit_buffer_r = None
+    return refit_buffer_X, refit_buffer_r
+
 def _extract_regularization(base_algorithm):
     if base_algorithm.__class__.__name__ == 'LogisticRegression':
         return 1.0 / base_algorithm.C
@@ -204,14 +237,19 @@ def _extract_regularization(base_algorithm):
         return base_algorithm.alpha
     elif base_algorithm.__class__.__name__ == 'StochasticLogisticRegression':
         return base_algorithm.reg_param
+    elif base_algorithm.__class__.__name__ == "LinearRegression":
+        if not ("lambda_" in dir(base_algorithm)):
+            return 0.
+        return base_algorithm.lambda_
     else:
         msg  = "'auto' option only available for "
         msg += "'LogisticRegression', 'SGDClassifier', 'RidgeClassifier', "
-        msg += "and 'StochasticLogisticRegression' (this package's or stochQN's)."
+        msg += "'StochasticLogisticRegression' (stochQN's), "
+        msg += "and 'LinearRegression' (this package's only)."
         raise ValueError(msg)
 
 def _logistic_grad_norm(X, y, pred, base_algorithm):
-    coef = base_algorithm.coef_.reshape(-1)
+    coef = base_algorithm.coef_.reshape(-1)[:X.shape[1]]
     err = pred - y
 
     if X.__class__.__name__ in ['coo_matrix', 'csr_matrix', 'csc_matrix']:
@@ -228,7 +266,7 @@ def _logistic_grad_norm(X, y, pred, base_algorithm):
     ### data points, or whether there is regularization or not.
 
     ## coefficients
-    grad_norm = np.linalg.norm(grad_norm, axis=1) ** 2
+    grad_norm = np.einsum("ij,ij->i", grad_norm, grad_norm)
 
     ## intercept
     if base_algorithm.fit_intercept:
@@ -240,7 +278,9 @@ def _get_logistic_grads_norms(base_algorithm, X, pred):
     return np.c_[_logistic_grad_norm(X, 0, pred, base_algorithm), _logistic_grad_norm(X, 1, pred, base_algorithm)]
 
 def _check_autograd_supported(base_algorithm):
-    assert base_algorithm.__class__.__name__ in ['LogisticRegression', 'SGDClassifier', 'RidgeClassifier', 'StochasticLogisticRegression']
+    supported = ['LogisticRegression', 'SGDClassifier', 'RidgeClassifier', 'StochasticLogisticRegression', 'LinearRegression']
+    if not base_algorithm.__class__.__name__ in supported:
+        raise ValueError("Automatic gradients only implemented for the following classes: " + ", ".join(supported))
     if base_algorithm.__class__.__name__ == 'LogisticRegression':
         if base_algorithm.penalty != 'l2':
             raise ValueError("Automatic gradients only defined for LogisticRegression with l2 regularization.")
@@ -411,7 +451,7 @@ class _BootstrappedClassifierBase:
         ix_take = ix_take_all[:, sample]
         xsample = X[ix_take, :]
         ysample = y[ix_take]
-        nclass = ysample.sum()
+        nclass = (ysample > 0.).sum()
         if not self.partialfit:
             if nclass == ysample.shape[0]:
                 self.bs_algos[sample] = _OnePredictor()
@@ -419,7 +459,13 @@ class _BootstrappedClassifierBase:
             elif nclass == 0:
                 self.bs_algos[sample] = _ZeroPredictor()
                 return None
-        self.bs_algos[sample].fit(xsample, ysample)
+            else:
+                self.bs_algos[sample].fit(xsample, ysample)
+        else:
+            if (nclass == ysample.shape[0]) or (nclass == 0):
+                self.bs_algos[sample].partial_fit(xsample, ysample, classes=[0,1])
+            else:
+                self.bs_algos[sample].fit(xsample, ysample)
 
     def partial_fit(self, X, y, classes=None):
         if self.partial_method == "gamma":
@@ -492,9 +538,85 @@ class _BootstrappedClassifier_w_predict(_BootstrappedClassifierBase):
     def _get_score(self, sample, X):
         return self.bs_algos[sample].predict(X).reshape(-1)
 
+class _RefitBuffer:
+    def __init__(self, n=50):
+        self.n = n
+        self.curr = 0
+        self.X_reserve = list()
+        self.y_reserve = list()
+        self.dim = 0
+
+    def add_obs(self, X, y):
+        if X.shape[0] == 0:
+            return None
+        n_new = X.shape[0]
+        if self.curr == 0:
+            self.dim = X.shape[1]
+        if X.shape[1] != self.dim:
+            raise ValueError("Wrong number of columns for X.")
+
+        if (self.curr + n_new) <= (self.n):
+            self.X_reserve.append(X)
+            self.y_reserve.append(y)
+            self.curr += n_new
+            if self.curr == self.n:
+                self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+                self.y_reserve = np.concatenate(self.y_reserve, axis=0)
+        elif isinstance(self.X_reserve, list):
+            self.X_reserve.append(X)
+            self.y_reserve.append(y)
+            self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+            self.y_reserve = np.concatenate(self.y_reserve, axis=0)
+            keep = np.random.choice(self.X_reserve.shape[0], size=self.n, replace=False)
+            self.X_reserve = self.X_reserve[keep]
+            self.y_reserve = self.y_reserve[keep]
+            self.curr = self.n
+        else: ### can only reach this point once reserve is full
+            if n_new == self.n:
+                self.X_reserve[:] = X[:]
+                self.y_reserve[:] = y[:]
+            elif n_new < self.n:
+                replace_ix = np.random.choice(self.n, size=n_new, replace=False)
+                self.X_reserve[replace_ix] = X[:]
+                self.y_reserve[replace_ix] = y[:]
+            else:
+                take_ix = np.random.choice(self.n+n_new, size=self.n, replace=False)
+                old_ix = take_ix[take_ix < self.n]
+                new_ix = take_ix[take_ix >= self.n] - self.n
+                self.X_reserve = np.r_[self.X_reserve[old_ix], X[new_ix]]
+                self.y_reserve = np.r_[self.y_reserve[old_ix], y[new_ix]]
+
+    def get_batch(self, X, y):
+        if self.curr == 0:
+            self.add_obs(X, y)
+            return X, y
+
+        if self.curr < self.n:
+            old_X = np.concatenate(self.X_reserve, axis=0)
+            old_y = np.concatenate(self.y_reserve, axis=0)
+        else:
+            old_X = self.X_reserve.copy()
+            old_y = self.y_reserve.copy()
+
+        if X.shape[0] == 0:
+            return old_X, old_y
+        else:
+            self.add_obs(X, y)
+
+        return np.r_[old_X, X], np.r_[old_y, y]
+
+    def do_full_refit(self):
+        return self.curr < self.n
+
 class _OneVsRest:
-    def __init__(self, base, X, a, r, n, thr, alpha, beta, smooth=False, assume_un=False,
-                 partialfit=False, force_fit=False, force_counters=False, njobs=1):
+    def __init__(self, base,
+                 X, a, r, n,
+                 thr, alpha, beta,
+                 smooth=False, assume_un=False,
+                 partialfit=False, refit_buffer=0,
+                 force_fit=False, force_counters=False,
+                 prev_ovr=None,
+                 njobs=1):
         if 'predict_proba' not in dir(base):
             base = _convert_decision_function_w_sigmoid(base)
         if partialfit:
@@ -504,13 +626,17 @@ class _OneVsRest:
             self.algos = base
         else:
             self.base = base
-            self.algos = [deepcopy(base) for i in range(n)]
+            if prev_ovr is not None:
+                self.algos = [m if (not isinstance(m, _FixedPredictor)) else deepcopy(base) for m in prev_ovr.algos]
+            else: 
+                self.algos = [deepcopy(base) for i in range(n)]
         self.n = n
         self.smooth = smooth
         self.assume_un = assume_un
         self.njobs = njobs
         self.force_fit = force_fit
         self.thr = thr
+        self.refit_buffer = refit_buffer
         self.partialfit = bool(partialfit)
         self.force_counters = bool(force_counters)
         if self.force_counters or (self.thr > 0 and not self.force_fit):
@@ -529,20 +655,30 @@ class _OneVsRest:
         else:
             self.counters = None
 
+        if (refit_buffer is not None) and (refit_buffer > 0):
+            self.buffer = [_RefitBuffer(refit_buffer) for i in range(n)]
+        else:
+            self.buffer = None
+
         if self.partialfit:
             self.partial_fit(X, a, r)
         else:
-            Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._full_fit_single)(choice, X, a, r) for choice in range(self.n))
+            Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                    (delayed(self._full_fit_single)\
+                            (choice, X, a, r) for choice in range(self.n))
 
     def _drop_arm(self, drop_ix):
         del self.algos[drop_ix]
+        if self.buffer is not None:
+            del sef.buffer[drop_ix]
         self.n -= 1
         if self.smooth is not None:
             self.counters = self.counters[:, np.arange(self.counters.shape[1]) != drop_ix]
         if self.force_counters or (self.thr > 0 and not self.force_fit):
             self.beta_counters = self.beta_counters[:, np.arange(self.beta_counters.shape[1]) != drop_ix]
 
-    def _spawn_arm(self, fitted_classifier = None, n_w_req = 0, n_wo_rew = 0):
+    def _spawn_arm(self, fitted_classifier = None, n_w_req = 0, n_wo_rew = 0,
+                   buffer_X = None, buffer_y = None):
         self.n += 1
         if self.smooth is not None:
             self.counters = np.c_[self.counters, np.array([n_w_req + n_wo_rew]).reshape((1, 1)).astype(self.counters.dtype)]
@@ -565,10 +701,14 @@ class _OneVsRest:
                     self.algos.append(_BetaPredictor(self.beta_counters[:, -1][1], self.beta_counters[:, -1][2]))
                 else:
                     self.algos.append(_ZeroPredictor())
+        if (self.buffer is not None):
+            self.buffer.append(_RefitBuffer(self.refit_buffer))
+            if (buffer_X is not None):
+                self.buffer[-1].add_obs(bufferX, buffer_y)
 
     def _update_beta_counters(self, yclass, choice):
         if (self.beta_counters[0, choice] == 0) or self.force_counters:
-            n_pos = yclass.sum()
+            n_pos = (yclass > 0.).sum()
             self.beta_counters[1, choice] += n_pos
             self.beta_counters[2, choice] += yclass.shape[0] - n_pos
             if (self.beta_counters[1, choice] > self.thr) and (self.beta_counters[2, choice] > self.thr):
@@ -576,7 +716,7 @@ class _OneVsRest:
 
     def _full_fit_single(self, choice, X, a, r):
         yclass, this_choice = self._filter_arm_data(X, a, r, choice)
-        n_pos = yclass.sum()
+        n_pos = (yclass > 0.).sum()
         if self.smooth is not None:
             self.counters[0, choice] += yclass.shape[0]
         if (n_pos < self.thr) or ((yclass.shape[0] - n_pos) < self.thr):
@@ -607,8 +747,16 @@ class _OneVsRest:
             self.counters[0, choice] += yclass.shape[0]
 
         xclass = X[this_choice, :]
+        do_full_refit = False
+        if self.buffer is not None:
+            do_full_refit = self.buffer[choice].do_full_refit()
+            xclass, yclass = self.buffer[choice].get_batch(xclass, yclass)
+
         if (xclass.shape[0] > 0) or self.force_fit:
-            self.algos[choice].partial_fit(xclass, yclass, classes = [0, 1])
+            if (do_full_refit) and (np.unique(yclass).shape[0] >= 2):
+                self.algos[choice].fit(xclass, yclass)
+            else:
+                self.algos[choice].partial_fit(xclass, yclass, classes = [0, 1])
 
         ## update the beta counters if needed
         if self.force_counters:
@@ -617,7 +765,7 @@ class _OneVsRest:
     def _filter_arm_data(self, X, a, r, choice):
         if self.assume_un:
             this_choice = (a == choice)
-            arms_w_rew = (r == 1)
+            arms_w_rew = (r > 0.)
             yclass = r[this_choice | arms_w_rew]
             yclass[arms_w_rew & (~this_choice) ] = 0
             this_choice = this_choice | arms_w_rew
@@ -657,6 +805,12 @@ class _OneVsRest:
             else:
                 preds[:, choice] = self.algos[choice].predict(X)
 
+        ### Note to self: it's not a problem to mix different methods from the
+        ### base class and from the fixed predictors class (e.g.
+        ### 'decision_function' from base vs. 'predict_proba' from fixed predictor),
+        ### because the base's method get standardized beforehand through
+        ### '_convert_decision_function_w_sigmoid'.
+
     def predict_proba(self, X):
         ### this is only used for softmax explorer
         preds = np.zeros((X.shape[0], self.n))
@@ -678,7 +832,7 @@ class _OneVsRest:
     def should_calculate_grad(self, choice):
         if self.force_fit:
             return True
-        if self.algos[choice].__class__.__name__ in ['_BetaPredictor', '_OnePredictor', '_ZeroPredictor']:
+        if isinstance(self.algos[choice], _FixedPredictor):
             return False
         if not bool(self.thr):
             return True
@@ -724,7 +878,7 @@ class _BayesianLogisticRegression:
         if self.method == 'advi':
             self.coefs = [i for i in trace.sample(nsamples)]
         elif self.method == 'nuts':
-            samples_chosen = np.random.choice(np.arange( len(trace) ), size = nsamples, replace = False)
+            samples_chosen = np.random.choice(len(trace), size = nsamples, replace = False)
             samples_chosen = set(list(samples_chosen))
             self.coefs = [i for i in trace if i in samples_chosen]
         else:
@@ -735,6 +889,8 @@ class _BayesianLogisticRegression:
         del self.coefs['Intercept']
         self.coefs = coefs.values.T
 
+    ### TODO: implement 'partial_fit' with stochastic variational inference
+
     def _predict_all(self, X):
         pred_all = X.dot(self.coefs) + self.intercept
         _apply_sigmoid(pred_all)
@@ -744,7 +900,7 @@ class _BayesianLogisticRegression:
         pred = self._predict_all(X)
         if self.mode == 'ucb':
             pred = np.percentile(pred, self.perc, axis=1)
-        elif self.mode == ' ts':
+        elif self.mode == 'ts':
             pred = pred[:, np.random.randint(pred.shape[1])]
         else:
             raise ValueError(_unexpected_err_msg)
@@ -754,78 +910,108 @@ class _BayesianLogisticRegression:
         pred = self._predict_all(X)
         return pred.mean(axis = 1)
 
-class _LinUCBnTSSingle:
-    def __init__(self, alpha, lambda_=1.0, fit_intercept=True, ts=False):
+class _LinUCB_n_TS_single:
+    def __init__(self, alpha=1.0, lambda_=1.0, fit_intercept=True,
+                 use_float=True, method="sm", ts=False):
         self.alpha = alpha
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
+        self.use_float = use_float
+        self.method = method
         self.ts = ts
-
-    def _sherman_morrison_update(self, x):
-        ## x should have shape (n, 1)
-        ## General idea is this, but this does it in a more efficient way:
-        ## Ainv -= np.linalg.multi_dot([Ainv, x, x.T, Ainv]) / (1.0 + np.linalg.multi_dot([x.T, Ainv, x]))
-        Ainv_x = np.dot(self.Ainv, x)
-        coef = -1./(1. + np.dot(x.T, Ainv_x))
-        blas.dger(alpha=coef, x=Ainv_x, y=Ainv_x, a=self.Ainv.T, overwrite_a=1)
-        ## https://github.com/scipy/scipy/issues/11525
-
+        self.model = LinearRegression(lambda_=self.lambda_,
+                                      fit_intercept=self.fit_intercept,
+                                      method=self.method,
+                                      use_float=self.use_float)
 
     def fit(self, X, y):
-        if len(X.shape) == 1:
-            X = X.reshape((1, -1))
-        if self.fit_intercept:
-            X = np.c_[X, np.ones((X.shape[0], 1))]
-        self.Ainv = X.T.dot(X)
-        self.Ainv[np.arange(X.shape[1]), np.arange(X.shape[1])] += self.lambda_
-        self.Ainv = np.linalg.inv(self.Ainv)
-        if np.isfortran(self.Ainv):
-            self.Ainv = np.ascontiguousarray(self.Ainv)
-        if self.Ainv.dtype != np.float64:
-            self.Ainv = self.Ainv.astype(np.float64)
-        self.b = (y.reshape((-1,1)) * X).sum(axis = 0).reshape((-1,1))
-        self.Ainv_dot_b = self.Ainv.dot(self.b)
+        if X.shape[0]:
+            self.model.fit(X, y)
+        return self
 
-    def partial_fit(self, X, y):
-        if len(X.shape) == 1:
-            X = X.reshape((1, -1))
-        if (X.dtype != np.float64):
-            X = X.astype(np.float64)
-        if self.fit_intercept:
-            X = np.c_[X, np.ones((X.shape[0], 1))]
-        if 'Ainv' not in dir(self):
-            self.Ainv = np.eye(X.shape[1], dtype=np.float64, order='C')
-            self.b = np.zeros((X.shape[1], 1))
-            if self.lambda_ != 1.0:
-                np.fill_diagonal(self.Ainv, 1./self.lambda_)
-        for i in range(X.shape[0]):
-            x = X[i, :].reshape((-1, 1))
-            self._sherman_morrison_update(x)
-
-        self.b += (y.reshape((-1,1)) * X).sum(axis = 0).reshape((-1,1))
-        self.Ainv_dot_b = self.Ainv.dot(self.b)
+    def partial_fit(self, X, y, *args, **kwargs):
+        if X.shape[0]:
+            self.model.partial_fit(X, y)
+        return self
 
     def predict(self, X, exploit=False):
-        if len(X.shape) == 1:
-            X = X.reshape((1, -1))
-        if self.fit_intercept:
-            X = np.c_[X, np.ones((X.shape[0], 1))]
-
-        if self.ts:
-            mu = (self.Ainv_dot_b).reshape(-1)
-            if not exploit:
-                mu = np.random.multivariate_normal(mu, self.alpha*self.Ainv, size=X.shape[0])
-            return (X * mu.reshape((X.shape[0], X.shape[1]))).sum(axis=1)
-
+        if exploit:
+            return self.model.predict(X)
+        elif not self.ts:
+            return self.model.predict_ucb(X, self.alpha)
         else:
-            pred = self.Ainv_dot_b.T.dot(X.T).reshape(-1)
-
-            if not exploit:
-                return pred
-            else:
-                pred += self.alpha*np.sqrt( (X.dot(self.Ainv) * X).sum(axis=1) )
-
-        return pred
+            return self.model.predict_thompson(X, self.alpha)
 
     def exploit(self, X):
         return self.predict(X, exploit = True)
+
+class _LogisticUCB_n_TS_single:
+    def __init__(self, lambda_=1., fit_intercept=True, alpha=0.95, m=1.0, ts=False):
+        self.conf_coef = norm_dist.ppf(alpha)
+        self.m = m
+        self.fit_intercept = fit_intercept
+        self.lambda_ = lambda_
+        self.ts = ts
+        self.warm_start = True
+        self.model = LogisticRegression(C=1./lambda_, penalty="l2",
+                                        fit_intercept=fit_intercept,
+                                        solver='lbfgs', max_iter=15000,
+                                        warm_start=True)
+        self.Sigma = np.empty((0,0), dtype=np.float64)
+
+    def fit(self, X, y, *args, **kwargs):
+        self.model.fit(X, y)
+        var = self.model.predict_proba(X)[:,1]
+        var = var * (1 - var)        
+        var = var.reshape((-1,1))
+        n = X.shape[1]
+        if self.fit_intercept:
+            self.Sigma = np.zeros((n+1,n+1), dtype=np.float64)
+            Xvar = (X * var) if not issparse(X) else X.multiply(var)
+            self.Sigma[:n,:n] = Xvar.T.dot(X)
+            self.Sigma[n,n] = var.sum()
+            if not issparse(X):
+                self.Sigma[n,:n] += Xvar.sum(axis=0)
+            else:
+                self.Sigma[n,:n] += np.array(Xvar.sum(axis=0)).reshape(-1)
+            self.Sigma[:n,n] = self.Sigma[n,:n]
+        else:
+            if not issparse(X):
+                self.Sigma = X.T.dot(X * var)
+            else:
+                self.Sigma = X.multiply(var).T.dot(X)
+
+        self.Sigma[np.arange(n), np.arange(n)] += self.lambda_
+        self.Sigma = np.linalg.inv(self.Sigma)
+
+
+    def decision_function(self, X, exploit=False):
+        if (self.ts) and (not exploit):
+            if self.fit_intercept:
+                coef = np.r_[self.model.coef_.reshape(-1), self.model.intercept_]
+            else:
+                coef = self.model.coef_.reshape(-1)
+            coef = np.random.multivariate_normal(mean=coef, cov=self.m*self.Sigma, size=X.shape[0])
+            if not issparse(X):
+                pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
+            else:
+                pred = X.multiply(coef[:,:X.shape[1]]).sum(axis=1)
+            if self.fit_intercept:
+                pred[:] += coef[:,-1]
+            return pred
+
+        pred = self.model.decision_function(X)
+        if not exploit:
+            n = X.shape[1]
+            if not issparse(X):
+                se_sq = np.einsum("ij,ij->i", X.dot(self.Sigma[:n,:n]), X)
+            else:
+                se_sq = X.multiply(X.dot(self.Sigma[:n,:n])).sum(axis=1)
+            if self.fit_intercept:
+                se_sq[:] += 2. * X.dot(self.Sigma[n,:n])
+                se_sq[:] += self.Sigma[n,n]
+            pred[:] += self.conf_coef * np.sqrt(se_sq.reshape(-1))
+        return pred
+
+    def exploit(self, X):
+        return 1. / (1. + np.exp(-self.model.decision_function(X)))

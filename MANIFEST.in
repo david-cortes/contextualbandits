@@ -1,0 +1,16 @@
+global-include *.pyx
+global-include *.pxi
+global-exclude *.c
+global-exclude *.h
+global-exclude *.so
+global-exclude *.o
+global-exclude *.dll
+global-exclude *.dynlib
+global-exclude *.directory
+include pyproject.toml
+exclude .gitignore
+exclude .gitattributes
+exclude example/*
+exclude build/*
+exclude dist/*
+exclude plots/*

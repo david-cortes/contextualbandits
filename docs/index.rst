@@ -18,6 +18,11 @@ Package is available on PyPI, can be installed with
 
     pip install contextualbandits
 
+If it fails to install due to not being able to compile C code, an earlier pure-Python version can be installed with
+::
+
+    pip install contextualbandits==0.1.8.5
+
 
 Getting started
 =================================
@@ -68,10 +73,12 @@ Policy Evaluation
     :show-inheritance:
     :inherited-members:
 
-Stochastic Logistic Regression
+Linear Regression
 =================================
 
-.. automodule:: contextualbandits.logistic
+This linear regression class keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once (as opposed to stochastic methods which don't have such property). Ideal for the online methods of this package when using them with streaming data.
+
+.. automodule:: contextualbandits.linreg
     :members:
     :undoc-members:
     :show-inheritance:

@@ -13,6 +13,9 @@ Package is available on PyPI, can be installed with
 ```pip install contextualbandits```
 
 
+_Note: as of version 0.2.0, this package contains Cython code which needs to be compiled - meaning, it requires a C compiler and setting up Python's setuptools to use it. If for some reason the latest version fails to install in your setup, it's still possible to install an earlier version which was pure-python with `pip install contextualbandits==0.1.8.5` (also available in this GitHub page under branch `no_cython`)._
+
+
 ## Problem description
 
 Contextual bandits, also known as multi-armed bandits with covariates or associative reinforcement learning, is a problem similar to multi-armed bandits, but with the difference that side information or covariates are available at each iteration and can be used to select an arm, whose rewards are also dependent on the covariates.
@@ -27,9 +30,7 @@ The aim is to create a policy that would maximize the rewards obtained by the ag
 
 The problem is very similar to multi-class or multi-label classification (with the reward being whether the right label was chosen or not), but with the big difference that the right label or set of labels is not known for each observation, only whether the label that was chosen by the agent for each observation was correct or not.
 
-Examples of such scenarios include online advertising, where we only know whether a user clicked an ad that he was presented with, but don't know which other ads he would have clicked; or clinic trials where we know how a person responded to a treatment, but don't know how he would have responded to a different treatment.
-
-While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, **this package deals only with the case of discrete rewards `{0,1}`**, and only with the case of arms that all see the same covariates.
+While, in general, algorithms for the contextual bandits problem assume continuous rewards in the range `[0,1]`, **this package deals only with the case of discrete rewards `{0,1}`**, and only with the case of arms that all see the same covariates. Some methods might still work fine for continuous rewards, but they are not meant to be used with them.
 
 Three of the main problematics that arise in contextual bandits are:
 
@@ -70,19 +71,24 @@ Documentation is also internally available through docstrings (e.g. you can try 
 * Fixed problems related to Python3 features when running online module in Python 2.7.
 * The online module can now use named arms, as well as add and drop arms from already-initialized objects.
 * The online and off-policy modules can now parallelize computations across arms (also across samples in bootstrapped methods).
-* LinUCB speed has been improved by taking more efficient matrix operation routes.
+* LinUCB speed has been improved by taking more efficient matrix operation routes and using Cython code.
+* Added a linear regression class which keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once.
+* Added functionality for `refit_buffer` in the batch/streaming train mode (see docs for details).
+* Added option to use base classifier's `warm_start` if available (for faster model fitting).
+* Updated the online example notebook for better results with both full-refit and streaming-mode versions after the latest additions.
 
 
 ## Implemented algorithms
 
-Implementations in this package include:
+Methods in this package include:
  
 Online:
 * LinUCB (see [2] and [11]) 
 * Linear Thompson Sampling (see [4])
+* Logistic upper confidence bounds and Thompson sampling (see [1])
 
-Adaptations from multi-armed bandits strategies:
-* Upper-confidence Bound (see [1], [6] and [3])
+Generalized adaptations from multi-armed bandits strategies:
+* Upper Confidence Bound (see [1], [6] and [3])
 * Thompson Sampling (see [1] and [3])
 * Epsilon Greedy (see [1], [7] and [6])
 * Adaptive Greedy (see [1] and [5])
@@ -99,7 +105,9 @@ Evaluation:
 * Rejection Sampling (see [2])
 * Doubly-Robust Policy Evaluation (see [9])
 
-Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details). Also included is a basic stochastic logistic regression classifier (`StochasticLogisticRegression`) which can use AdaGrad or RMSProp as optimization algorithm instead of gradient descent, to go along with the online metaheuristics from here.
+Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details).
+
+Also included is a linear regression class (`contextualbandits.linreg.LinearRegression`) which keeps the matrices used for the closed-form solution and updates them incrementally when calling `partial_fit` - the advantage being that fitting it in batches leads to the same result as fitting it to all data - in order to go along with the batch/streaming methods from `contextualbandits.online`.
 
 ![image](plots/bibtex_results.png "bibtex_simulation")
 
@@ -124,30 +132,30 @@ Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (
 
 Many of this package's methods assume that the binary classification algorithms used have probabilistic outputs (e.g. `DoublyRobustEstimator`), ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation (otherwise will assume the outputs from `predict` are bounded between zero and one). Under some of the online algorithms (e.g. `SoftmaxExplorer`, `AdaptiveGreedy`) or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
-Be aware that this is a research-oriented package and it has not been optimized for speed.
+Be aware that this is a research-oriented package, and has not been optimized for speed.
 
 ## References
 
-[1] Cortes, D. (2018). Adapting multi-armed bandits policies to contextual bandits scenarios. arXiv preprint arXiv:1811.04383.
+* [1] Cortes, D. (2018). Adapting multi-armed bandits policies to contextual bandits scenarios. arXiv preprint arXiv:1811.04383.
 
-[2] Li, L., Chu, W., Langford, J., & Schapire, R. E. (2010, April). A contextual-bandit approach to personalized news article recommendation. In Proceedings of the 19th international conference on World wide web (pp. 661-670). ACM.
+* [2] Li, L., Chu, W., Langford, J., & Schapire, R. E. (2010, April). A contextual-bandit approach to personalized news article recommendation. In Proceedings of the 19th international conference on World wide web (pp. 661-670). ACM.
 
-[3] Chapelle, O., & Li, L. (2011). An empirical evaluation of thompson sampling. In Advances in neural information processing systems (pp. 2249-2257).
+* [3] Chapelle, O., & Li, L. (2011). An empirical evaluation of thompson sampling. In Advances in neural information processing systems (pp. 2249-2257).
 
-[4] Agrawal, S., & Goyal, N. (2013, February). Thompson sampling for contextual bandits with linear payoffs. In International Conference on Machine Learning (pp. 127-135).
+* [4] Agrawal, S., & Goyal, N. (2013, February). Thompson sampling for contextual bandits with linear payoffs. In International Conference on Machine Learning (pp. 127-135).
 
-[5] Chakrabarti, D., Kumar, R., Radlinski, F., & Upfal, E. (2009). Mortal multi-armed bandits. In Advances in neural information processing systems (pp. 273-280).
+* [5] Chakrabarti, D., Kumar, R., Radlinski, F., & Upfal, E. (2009). Mortal multi-armed bandits. In Advances in neural information processing systems (pp. 273-280).
 
-[6] Vermorel, J., & Mohri, M. (2005, October). Multi-armed bandit algorithms and empirical evaluation. In European conference on machine learning (pp. 437-448). Springer, Berlin, Heidelberg.
+* [6] Vermorel, J., & Mohri, M. (2005, October). Multi-armed bandit algorithms and empirical evaluation. In European conference on machine learning (pp. 437-448). Springer, Berlin, Heidelberg.
 
-[7] Yue, Y., Broder, J., Kleinberg, R., & Joachims, T. (2012). The k-armed dueling bandits problem. Journal of Computer and System Sciences, 78(5), 1538-1556.
+* [7] Yue, Y., Broder, J., Kleinberg, R., & Joachims, T. (2012). The k-armed dueling bandits problem. Journal of Computer and System Sciences, 78(5), 1538-1556.
 
-[8] Beygelzimer, A., & Langford, J. (2009, June). The offset tree for learning with partial labels. In Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining (pp. 129-138). ACM.
+* [8] Beygelzimer, A., & Langford, J. (2009, June). The offset tree for learning with partial labels. In Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining (pp. 129-138). ACM.
 
-[9] Dudík, M., Langford, J., & Li, L. (2011). Doubly robust policy evaluation and learning. arXiv preprint arXiv:1103.4601.
+* [9] Dudík, M., Langford, J., & Li, L. (2011). Doubly robust policy evaluation and learning. arXiv preprint arXiv:1103.4601.
 
-[10] Dudík, M., Erhan, D., Langford, J., & Li, L. (2014). Doubly robust policy evaluation and optimization. Statistical Science, 485-511.
+* [10] Dudík, M., Erhan, D., Langford, J., & Li, L. (2014). Doubly robust policy evaluation and optimization. Statistical Science, 485-511.
 
-[11] Chu, W., Li, L., Reyzin, L., & Schapire, R. (2011, June). Contextual bandits with linear payoff functions. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (pp. 208-214).
+* [11] Chu, W., Li, L., Reyzin, L., & Schapire, R. (2011, June). Contextual bandits with linear payoff functions. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (pp. 208-214).
 
-[12] Kuhn, M., & Johnson, K. (2013). Applied predictive modeling (Vol. 26). New York: Springer.
+* [12] Kuhn, M., & Johnson, K. (2013). Applied predictive modeling (Vol. 26). New York: Springer.

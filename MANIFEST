@@ -3,6 +3,7 @@ setup.cfg
 setup.py
 contextualbandits/__init__.py
 contextualbandits/evaluation.py
+contextualbandits/logistic.py
 contextualbandits/offpolicy.py
 contextualbandits/online.py
 contextualbandits/utils.py

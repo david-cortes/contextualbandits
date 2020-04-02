@@ -1,0 +1,2 @@
+[build-system]
+requires = ["cython", "setuptools", "wheel", "numpy", "pandas>=0.25.0", "scipy", "joblib>=0.13", "scikit-learn>=0.22"]
