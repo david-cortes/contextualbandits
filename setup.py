@@ -14,7 +14,7 @@ class build_ext_subclass( build_ext ):
 
 setup(
     name = 'contextualbandits',
-    packages = ['contextualbandits'],
+    packages = ['contextualbandits', 'contextualbandits.linreg'],
     install_requires=[
         'numpy',
         'scipy',
