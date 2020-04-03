@@ -1,10 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import pandas as pd, numpy as np
-from contextualbandits.utils import _check_fit_input, _check_1d_inp, _check_X_input
+from contextualbandits.utils import _check_fit_input, _check_1d_inp, \
+        _check_X_input, _check_random_state
 from contextualbandits.online import SeparateClassifiers
 
-def evaluateRejectionSampling(policy, X, a, r, online=False, start_point_online='random', batch_size=10):
+def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
+                              start_point_online='random', random_state=1,
+                              batch_size=10):
     """
     Evaluate a policy using rejection sampling on test data.
     
@@ -27,9 +30,17 @@ def evaluateRejectionSampling(policy, X, a, r, online=False, start_point_online=
     online : bool
         Whether this is an online policy to be evaluated by refitting it to the data
         as it makes choices on it.
+    partial_fit : bool
+        Whether to use 'partial_fit' when fitting the policy to more data.
+        Ignored if passing ``online=False``.
     start_point_online : either str 'random' or int in [0, n_samples-1]
         Point at which to start evaluating cases in the sample.
         Only used when passing online=True.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``start_point_online='random'``.
     batch_size : int
         After how many rounds to refit the policy being evaluated.
         Only used when passing online=True.
@@ -46,7 +57,8 @@ def evaluateRejectionSampling(policy, X, a, r, online=False, start_point_online=
     """
     X,a,r=_check_fit_input(X,a,r)
     if start_point_online=='random':
-        start_point_online=np.random.randint(X.shape[0])
+        random_state = _check_random_state(random_state)
+        start_point_online = random_state.randint(X.shape[0])
     else:
         if isinstance(start_point_online, int):
             pass
@@ -60,37 +72,49 @@ def evaluateRejectionSampling(policy, X, a, r, online=False, start_point_online=
         match=pred==a
         return (np.mean(r[match]), match.sum())
     else:
+        ### TODO: this for loop approach is too slow, should instead have a
+        ### forward window to make predictions in batches and then backtrack
+        ### at the time a refit is due.
         cum_r=0
         cum_n=0
         ix_chosen=list()
-        policy.fit(X[:0,:], a[:0], r[:0])
+        policy.fit(X[:0], a[:0], r[:0])
         for i in range(start_point_online, X.shape[0]):
-            obs=X[i,:].reshape(1,-1)
+            obs=X[i].reshape((1,-1))
             would_choose=policy.predict(obs)[0]
             if would_choose==a[i]:
                 cum_r+=r[i]
                 cum_n+=1
                 ix_chosen.append(i)
                 if (cum_n%batch_size)==0:
-                    ix_fit=np.array(ix_chosen)
-                    policy.fit(X[ix_fit,:], a[ix_fit], r[ix_fit])
+                    if not partial_fit:
+                        ix_fit=np.array(ix_chosen)
+                        policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
+                    else:
+                        ix_fit = np.array(ix_chosen[:-(batch_size+1):-1])
+                        policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
         for i in range(0, start_point_online):
-            obs=X[i,:].reshape(1,-1)
+            obs=X[i].reshape(1,-1)
             would_choose=policy.predict(obs)[0]
             if would_choose==a[i]:
                 cum_r+=r[i]
                 cum_n+=1
                 ix_chosen.append(i)
                 if (cum_n%batch_size)==0:
-                    ix_fit=np.array(ix_chosen)
-                    policy.fit(X[ix_fit,:], a[ix_fit], r[ix_fit])
+                    if not partial_fit:
+                        ix_fit=np.array(ix_chosen)
+                        policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
+                    else:
+                        ix_fit = np.array(ix_chosen)[:-(batch_size+1):-1]
+                        policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
         if cum_n==0:
             raise ValueError("Rejection sampling couldn't obtain any matching samples.")
         return (cum_r/cum_n, cum_n)
     
 
 def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
-                         handle_invalid=True, c=None, pmin=1e-5):
+                         handle_invalid=True, c=None, pmin=1e-5,
+                         random_state = 1):
     """
     Doubly-Robust Policy Evaluation
     
@@ -155,6 +179,10 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     pmin : None or float
         Scores (from the exploration policy) will be converted to the minimum between
         pmin and the original estimate.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
     
     References
     ----------
@@ -170,6 +198,8 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
         assert isinstance(c, float)
     if pmin is not None:
         assert isinstance(pmin, float)
+
+    rs = _check_random_state(random_state)
     
     if type(reward_estimator)==np.ndarray:
         assert reward_estimator.shape[1]==2
@@ -181,7 +211,7 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
         rhat_new = rhat[np.arange(rhat.shape[0]), pred]
         rhat_old = rhat[np.arange(rhat.shape[0]), a]
     elif 'predict_proba' in dir(reward_estimator):
-        reward_estimator = SeparateClassifiers(reward_estimator, nchoices)
+        reward_estimator = SeparateClassifiers(reward_estimator, nchoices, random_state=rs)
         reward_estimator.fit(X, a, r)
         rhat = reward_estimator.predict_proba_separate(X)
         rhat_new = rhat[np.arange(rhat.shape[0]), pred]
@@ -192,10 +222,10 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
         raise ValueError(error_msg)
     
     if handle_invalid:
-        rhat_new[rhat_new==1]=np.random.beta(3,1,size=rhat_new.shape)[rhat_new==1]
-        rhat_new[rhat_new==0]=np.random.beta(1,3,size=rhat_new.shape)[rhat_new==0]
-        rhat_old[rhat_old==1]=np.random.beta(3,1,size=rhat_old.shape)[rhat_old==1]
-        rhat_old[rhat_old==0]=np.random.beta(1,3,size=rhat_old.shape)[rhat_old==0]
+        rhat_new[rhat_new==1] = rs.beta(3,1,size=rhat_new.shape)[rhat_new==1]
+        rhat_new[rhat_new==0] = rs.beta(1,3,size=rhat_new.shape)[rhat_new==0]
+        rhat_old[rhat_old==1] = rs.beta(3,1,size=rhat_old.shape)[rhat_old==1]
+        rhat_old[rhat_old==0] = rs.beta(1,3,size=rhat_old.shape)[rhat_old==0]
     
     if c is not None:
         p = c*p
@@ -208,7 +238,8 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     
     return np.mean(out)
 
-def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update_freq=50, seed=None):
+def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
+                         update_freq=50, random_state=1):
     """
     Evaluates a policy on fully-labeled data
     
@@ -229,8 +260,11 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update
         Be awarethat data is shuffled in-place.
     update_freq : int
         Batch size - how many observations to predict before refitting the model.
-    seed : None or int
-        Random seed to use when shuffling and when selecting actions at random for first batch.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is used when shuffling
+        and when selecting actions at random for first batch.
     
     Returns
     -------
@@ -250,12 +284,12 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update
     assert X.shape[0]>update_freq
     assert X.shape[0]==y_onehot.shape[0]
     assert X.shape[0]>0
+
+    rs = _check_random_state(random_state)
     
     if shuffle:
         new_order=np.arange(X.shape[0])
-        if seed is not None:
-            np.random.seed(seed)
-        np.random.shuffle(new_order)
+        rs.shuffle(new_order)
         X=X[new_order,:]
         y_onehot=y_onehot[new_order,:]
         
@@ -265,9 +299,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True, update
     
     ## initial seed
     batch_features = X[:update_freq,:]
-    if seed is not None:
-        np.random.seed(seed)
-    batch_actions = np.random.randint(y_onehot.shape[1], size=update_freq)
+    batch_actions = rs.randint(y_onehot.shape[1], size=update_freq)
     batch_rewards = y_onehot[np.arange(update_freq), batch_actions]
     
     if online:

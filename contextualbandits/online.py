@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 
-import pandas as pd, numpy as np, warnings
+import numpy as np, warnings
 from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
-            _BetaPredictor, _ZeroPredictor, _OnePredictor, _OneVsRest,\
+            _ZeroPredictor, _OnePredictor, _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
             _BayesianLogisticRegression,\
-            _check_bools, _check_refit_buffer, _check_refit_inp, \
+            _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
             _add_method_predict_robust, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
@@ -19,7 +19,8 @@ class _BasePolicy:
         pass
 
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices,
-            batch_train, refit_buffer, assume_unique_reward, assign_algo=True, prior_def_ucb = False):
+            batch_train, refit_buffer, deep_copy_buffer, assume_unique_reward,
+            random_state, assign_algo=True, prior_def_ucb = False):
         
         if isinstance(base_algorithm, np.ndarray) or base_algorithm.__class__.__name__ == "Series":
             base_algorithm = list(base_algorithm)
@@ -30,6 +31,7 @@ class _BasePolicy:
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
+        self.random_state = _check_random_state(random_state)
 
         if assign_algo:
             self.base_algorithm = base_algorithm
@@ -41,6 +43,7 @@ class _BasePolicy:
             self.has_warm_start = False
 
         self.refit_buffer = _check_refit_buffer(refit_buffer, self.batch_train)
+        self.deep_copy_buffer = bool(deep_copy_buffer)
 
         ### For compatibility with the active policies
         self._force_fit = False
@@ -121,8 +124,10 @@ class _BasePolicy:
         self.nchoices -= 1
         self.choice_names = np.r_[self.choice_names[:drop_ix], self.choice_names[drop_ix + 1:]]
 
+    ## TODO: maybe add functionality to take an arm from another object of this class
+
     def add_arm(self, arm_name = None, fitted_classifier = None,
-                n_w_req = 0, n_wo_rew = 0,
+                n_w_rew = 0, n_wo_rew = 0,
                 refit_buffer_X = None, refit_buffer_r = None):
         """
         Adds a new arm to the pool of choices
@@ -135,15 +140,15 @@ class _BasePolicy:
         fitted_classifier : object
             If a classifier has already been fit to rewards coming from this arm, you can pass it here, otherwise,
             will be started from the same 'base_classifier' as the initial arms. If using bootstrapped or Bayesian methods,
-            don't pass a classifier here (unless using the classes in `utils._BootstrappedClassifierBase`, `utils._BayesianLogisticRegression`)
-        n_w_req : int
+            don't pass a classifier here (unless using the classes in `utils._BootstrappedClassifierBase` or `utils._BayesianLogisticRegression`)
+        n_w_rew : int
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
             Number of trials/rounds without rewards coming from this arm (only used when using a beta prior or smoothing).
         refit_buffer_X : array(m, n) or None
             Refit buffer of 'X' data to use for the new arm. Ignored when using
             'batch_train=False' or 'refit_buffer=None'.
-        refit_buffer_y : array(m,) or None
+        refit_buffer_r : array(m,) or None
             Refit buffer of rewards data to use for the new arm. Ignored when using
             'batch_train=False' or 'refit_buffer=None'.
 
@@ -152,14 +157,14 @@ class _BasePolicy:
         self : object
             This object
         """
-        assert isinstance(n_w_req,  int)
+        assert isinstance(n_w_rew,  int)
         assert isinstance(n_wo_rew, int)
-        assert n_w_req >= 0
+        assert n_w_rew >= 0
         assert n_wo_rew >= 0
         refit_buffer_X, refit_buffer_r = \
             _check_refit_inp(refit_buffer_X, refit_buffer_r, self.refit_buffer)
         arm_name = self._check_new_arm_name(arm_name)
-        self._oracles._spawn_arm(fitted_classifier, n_w_req, n_wo_rew,
+        self._oracles._spawn_arm(fitted_classifier, n_w_rew, n_wo_rew,
                                  refit_buffer_X, refit_buffer_r)
         self._append_arm(arm_name)
         return self
@@ -215,13 +220,16 @@ class _BasePolicy:
                                    X, a, r,
                                    self.nchoices,
                                    self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
+                                   self.random_state,
                                    self.smoothing,
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    refit_buffer = self.refit_buffer,
+                                   deep_copy = self.deep_copy_buffer,
                                    force_fit = self._force_fit,
                                    force_counters = self._force_counters,
-                                   prev_ovr = self._oracles if use_warm else None,
+                                   prev_ovr = self._oracles if self.is_fitted else None,
+                                   warm = use_warm,
                                    njobs = self.njobs)
         self.is_fitted = True
         return self
@@ -288,7 +296,7 @@ class _BasePolicy:
     def _predict_random_if_unfit(self, X, output_score):
         warnings.warn("Model object has not been fit to data, predictions will be random.")
         X = _check_X_input(X)
-        pred = self._name_arms(np.random.randint(self.nchoices, size = X.shape[0]))
+        pred = self._name_arms(self.random_state.randint(self.nchoices, size = X.shape[0]))
         if not output_score:
             return pred
         else:
@@ -306,17 +314,23 @@ class _BasePolicyWithExploit(_BasePolicy):
         if "predict_proba" in dir(base_algorithm):
             self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
                 base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                self.batch_train, self.batch_sample_method,
+                random_state = 1,
+                njobs = self.njobs_samples
                 )
         elif "decision_function" in dir(base_algorithm):
             self.base_algorithm = _BootstrappedClassifier_w_decision_function(
                 base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                self.batch_train, self.batch_sample_method,
+                random_state = 1,
+                njobs = self.njobs_samples
                 )
         else:
             self.base_algorithm = _BootstrappedClassifier_w_predict(
                 base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method, njobs = self.njobs_samples
+                self.batch_train, self.batch_sample_method,
+                random_state = 1,
+                njobs = self.njobs_samples
                 )
 
     def _exploit(self, X):
@@ -422,6 +436,14 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -429,6 +451,13 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs_arms : int or None
         Number of parallel jobs to run (for dividing work across arms). If passing None will set it to 1.
         If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
@@ -445,14 +474,15 @@ class BootstrappedUCB(_BasePolicyWithExploit):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
-                 beta_prior='auto', smoothing=None, batch_train=False, refit_buffer=None,
+                 beta_prior='auto', smoothing=None, batch_train=False,
+                 refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, batch_sample_method='gamma',
-                 njobs_arms=-1, njobs_samples=1):
+                 random_state=None, njobs_arms=-1, njobs_samples=1):
         assert (percentile >= 0) and (percentile <= 100)
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
-                                nchoices, batch_train, refit_buffer,
-                                assume_unique_reward, assign_algo = False,
-                                prior_def_ucb = True)
+                                nchoices, batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state,
+                                assign_algo = False, prior_def_ucb = True)
         self.percentile = percentile
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, self.percentile)
 
@@ -470,6 +500,12 @@ class BootstrappedTS(_BasePolicyWithExploit):
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
     distributed ~ Poisson(1). However, I've found that assigning random weights to observations
     produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(1,1).
+
+    Note
+    ----
+    Unlike the other Thompson sampling classes, this class, due to using bootstrapped
+    samples, does not offer the option 'sample_unique' - it's equivalent to
+    always having `False` for that parameter in the other methods.
     
     Parameters
     ----------
@@ -516,6 +552,14 @@ class BootstrappedTS(_BasePolicyWithExploit):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -523,6 +567,13 @@ class BootstrappedTS(_BasePolicyWithExploit):
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs_arms : int or None
         Number of parallel jobs to run (for dividing work across arms). If passing None will set it to 1.
         If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
@@ -541,12 +592,12 @@ class BootstrappedTS(_BasePolicyWithExploit):
            Advances in neural information processing systems. 2011.
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
-                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
-                 batch_sample_method='gamma',
-                 njobs_arms=-1, njobs_samples=1):
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, batch_sample_method='gamma',
+                 random_state=None, njobs_arms=-1, njobs_samples=1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
-                                nchoices, batch_train, refit_buffer,
-                                assume_unique_reward, assign_algo=False)
+                                nchoices, batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state, assign_algo=False)
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, None)
 
 class LogisticUCB(_BasePolicyWithExploit):
@@ -605,6 +656,14 @@ class LogisticUCB(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -616,10 +675,10 @@ class LogisticUCB(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, percentile=95, fit_intercept=True, lambda_=1.0,
+    def __init__(self, nchoices, percentile=80, fit_intercept=True, lambda_=1.0,
                  beta_prior='auto', smoothing=None,
                  assume_unique_reward=False,
-                 njobs=-1):
+                 random_state=None, njobs=-1):
         assert (percentile >= 0) and (percentile <= 100)
         assert lambda_ > 0.
         base = _LogisticUCB_n_TS_single(lambda_=float(lambda_),
@@ -627,8 +686,8 @@ class LogisticUCB(_BasePolicyWithExploit):
                                         alpha=float(percentile) / 100.,
                                         ts=False)
         self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
-                                False, None, assume_unique_reward, assign_algo = True,
-                                prior_def_ucb = True)
+                                False, None, False, assume_unique_reward,
+                                random_state, assign_algo=True, prior_def_ucb=True)
         self.percentile = percentile
 
 class LogisticTS(_BasePolicyWithExploit):
@@ -659,7 +718,7 @@ class LogisticTS(_BasePolicyWithExploit):
     ----
     Be aware that sampling coefficients is an operation that scales poorly with
     the number of columns/features/variables. For wide datasets, it might be
-    a lot slower than a bootstrapped approach.
+    slower than a bootstrapped approach, especially when using ``sample_unique=True``.
 
     Parameters
     ----------
@@ -673,6 +732,15 @@ class LogisticTS(_BasePolicyWithExploit):
         Whether to add an intercept term to the models.
     lambda_ : float
         Strenght of the L2 regularization. Must be greater than zero.
+    sample_unique : bool
+        Whether to sample different coefficients each time a prediction is to
+        be made. If passing 'False', when calling 'predict', it will sample
+        the same coefficients for all the observations in the same call to
+        'predict', whereas if passing 'True', will use a different set of
+        coefficients for each observations. Passing 'False' leads to an
+        approach which is theoretically wrong, but as sampling coefficients
+        can be very slow, using 'False' can provide a reasonable speed up
+        without much of a performance penalty.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -692,6 +760,14 @@ class LogisticTS(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -703,10 +779,10 @@ class LogisticTS(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, multiplier=1.0, fit_intercept=True, lambda_=1.0,
+    def __init__(self, nchoices, multiplier=1.0, fit_intercept=True,
+                 lambda_=1.0, sample_unique = False,
                  beta_prior='auto', smoothing=None,
-                 assume_unique_reward=False,
-                 njobs=-1):
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         warnings.warn("This class is experimental. Not recommended to rely on it.")
         assert lambda_ > 0.
         assert multiplier > 0.
@@ -714,10 +790,11 @@ class LogisticTS(_BasePolicyWithExploit):
                                         fit_intercept=fit_intercept,
                                         alpha=0.,
                                         m=multiplier,
-                                        ts=True)
+                                        ts=True,
+                                        sample_unique=sample_unique)
         self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
-                                False, None, assume_unique_reward, assign_algo = True,
-                                prior_def_ucb = False)
+                                False, None, False, assume_unique_reward,
+                                random_state, assign_algo=True, prior_def_ucb=False)
 
 class SeparateClassifiers(_BasePolicy):
     """
@@ -770,10 +847,26 @@ class SeparateClassifiers(_BasePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -786,10 +879,11 @@ class SeparateClassifiers(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
-                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
-                 njobs=-1):
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
     
     def decision_function_std(self, X):
         """
@@ -919,10 +1013,25 @@ class EpsilonGreedy(_BasePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -938,9 +1047,11 @@ class EpsilonGreedy(_BasePolicy):
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
                  beta_prior='auto', smoothing=None, batch_train=False,
-                 refit_buffer=None, assume_unique_reward=False, njobs=-1):
+                 refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
         assert (explore_prob>0) and (explore_prob<1)
         if decay is not None:
             assert (decay>0) and (decay<1)
@@ -975,8 +1086,8 @@ class EpsilonGreedy(_BasePolicy):
         scores = self.decision_function(X)
         pred = np.argmax(scores, axis = 1)
         if not exploit:
-            ix_change_rnd = (np.random.random(size =  X.shape[0]) <= self.explore_prob)
-            pred[ix_change_rnd] = np.random.randint(self.nchoices, size = ix_change_rnd.sum())
+            ix_change_rnd = (self.random_state.random(size =  X.shape[0]) <= self.explore_prob)
+            pred[ix_change_rnd] = self.random_state.randint(self.nchoices, size = ix_change_rnd.sum())
         pred = self._name_arms(pred)
 
         if self.decay is not None:
@@ -998,13 +1109,15 @@ class _ActivePolicy(_BasePolicy):
                     grad_norms = \
                         self._rand_grad_norms(X,
                                               self._oracles.get_n_pos(choice),
-                                              self._oracles.get_n_neg(choice))
+                                              self._oracles.get_n_neg(choice),
+                                              self.random_state)
                 else:
                     grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
             else:
                 grad_norms = self._rand_grad_norms(X,
                                                    self._oracles.get_n_pos(choice),
-                                                   self._oracles.get_n_neg(choice))
+                                                   self._oracles.get_n_neg(choice),
+                                                   self.random_state)
 
             if grad_crit == 'min':
                 pred[:, choice] = grad_norms.min(axis = 1)
@@ -1102,6 +1215,14 @@ class AdaptiveGreedy(_ActivePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -1117,18 +1238,26 @@ class AdaptiveGreedy(_ActivePolicy):
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, random_state) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
         problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
+        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed, a ``RandomState``
+        object from NumPy to use for generating random numbers.
         If passing 'auto', will generate random numbers:
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
         If passing 'zero', it will output zero whenever models have not been fitted.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -1144,10 +1273,12 @@ class AdaptiveGreedy(_ActivePolicy):
     """
     def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35, decay=0.9998,
                  decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
-                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
-                 active_choice=None, f_grad_norm='auto', case_one_class='auto', njobs=-1):
+                 batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
+                 assume_unique_reward=False, active_choice=None, f_grad_norm='auto',
+                 case_one_class='auto', random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
         
         assert isinstance(window_size, int)
         if percentile is not None:
@@ -1273,7 +1404,7 @@ class AdaptiveGreedy(_ActivePolicy):
 
     def _choose_greedy(self, set_greedy, X, pred, pred_all):
         if self.active_choice is None:
-            pred[set_greedy] = np.random.randint(self.nchoices, size = set_greedy.sum())
+            pred[set_greedy] = self.random_state.randint(self.nchoices, size = set_greedy.sum())
         else:
             pred[set_greedy] = np.argmax(
                 self._crit_active(
@@ -1335,10 +1466,25 @@ class ExploreFirst(_BasePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -1352,9 +1498,11 @@ class ExploreFirst(_BasePolicy):
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
                  beta_prior=None, smoothing=None, batch_train=False,
-                 refit_buffer=None, assume_unique_reward=False, njobs=-1):
+                 refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
         
         assert explore_rounds>0
         assert isinstance(explore_rounds, int)
@@ -1397,13 +1545,13 @@ class ExploreFirst(_BasePolicy):
             
             # case 1: all predictions are within allowance
             if self.explore_cnt <= self.explore_rounds:
-                return np.random.randint(self.nchoices, size = X.shape[0])
+                return self.random_state.randint(self.nchoices, size = X.shape[0])
             
             # case 2: some predictions are within allowance, others are not
             else:
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
                 pred = np.empty(X.shape[0], type = "float64")
-                pred[:n_explore] = np.random.randint(self.nchoices, n_explore)
+                pred[:n_explore] = self.random_state.randint(self.nchoices, n_explore)
                 pred[n_explore:] = self._oracles.predict(X[n_explore:])
                 return pred
         else:
@@ -1441,14 +1589,15 @@ class ActiveExplorer(_ActivePolicy):
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, random_state) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
         problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed.
+        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed, a ``RandomState``
+        object from NumPy to use for generating random numbers.
         If passing 'auto', will generate random numbers:
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
@@ -1490,12 +1639,26 @@ class ActiveExplorer(_ActivePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_seed : None or int
-        Random state or seed to pass to the solver.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -1509,11 +1672,12 @@ class ActiveExplorer(_ActivePolicy):
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
                  explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
-                 batch_train=False, refit_buffer=None, assume_unique_reward=False,
-                 random_seed=None, njobs=-1):
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward, assign_algo=False)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state, assign_algo=False)
 
         if self.batch_train:
             base_algorithm = _add_method_predict_robust(base_algorithm)
@@ -1553,7 +1717,7 @@ class ActiveExplorer(_ActivePolicy):
         
         pred = self._oracles.decision_function(X)
         if not exploit:
-            change_greedy = np.random.random(size=X.shape[0]) <= self.explore_prob
+            change_greedy = self.random_state.random(size=X.shape[0]) <= self.explore_prob
             if np.any(change_greedy):
                 pred[change_greedy, :] = self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
             
@@ -1625,10 +1789,25 @@ class SoftmaxExplorer(_BasePolicy):
         the data in batches, but memory consumption can grow quite large.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the orinal data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -1641,10 +1820,12 @@ class SoftmaxExplorer(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
-                 beta_prior='auto', smoothing=None, batch_train=False, refit_buffer=None,
-                 assume_unique_reward=False, njobs=-1):
+                 beta_prior='auto', smoothing=None, batch_train=False,
+                 refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
-                                batch_train, refit_buffer, assume_unique_reward)
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
 
         if multiplier is not None:
             if isinstance(multiplier, int):
@@ -1712,7 +1893,10 @@ class SoftmaxExplorer(_BasePolicy):
                 self.multiplier *= self.inflation_rate ** pred.shape[0]
         _apply_softmax(pred)
         chosen = np.empty(pred.shape[0], dtype = "int64")
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._pick_pred)(i, chosen, pred) for i in range(pred.shape[0]))
+        rs = self.random_state.randint(np.iinfo(np.int32).max, size = pred.shape[0])
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                (delayed(self._pick_pred)(i, chosen, pred, rs) \
+                    for i in range(pred.shape[0]))
         if output_score:
             score_chosen = pred[np.arange(pred.shape[0]), np.array(chosen)]
         chosen = self._name_arms(chosen)
@@ -1722,10 +1906,11 @@ class SoftmaxExplorer(_BasePolicy):
         else:
             return {"choice" : chosen, "score" : score_chosen}
 
-    def _pick_pred(self, i, chosen, pred):
+    def _pick_pred(self, i, chosen, pred, rs):
+        rs = np.random.RandomState(seed = rs[i])
         if pred[i].sum() != 1.0: #floating point arithmetic issues
             pred[i] = pred[i] / np.sum(pred[i])
-        chosen[i] = np.random.choice(self.nchoices, p = pred[i])
+        chosen[i] = rs.choice(self.nchoices, p = pred[i])
 
 
 class LinUCB(_BasePolicyWithExploit):
@@ -1781,10 +1966,27 @@ class LinUCB(_BasePolicyWithExploit):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((5/nchoices, 4), 2)
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Note that it is technically incorrect to apply smoothing like this (because
+        the predictions from models are not bounded between zero and one), but
+        if neither ``beta_prior``, nor ``smoothing`` are passed, the policy can get
+        stuck in situations in which it will only choose actions from the first batch
+        of observations to which it is fit.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1800,18 +2002,17 @@ class LinUCB(_BasePolicyWithExploit):
     """
     def __init__(self, nchoices, alpha=1.0, lambda_=1.0, fit_intercept=True,
                  use_float=True, method="sm",
-                 beta_prior=None,
-                 assume_unique_reward=False,
-                 njobs = 1):
+                 beta_prior=None, smoothing=None, assume_unique_reward=False,
+                 random_state=None, njobs=1):
         self._ts = False
         self._add_common_lin(alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.alpha, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
                                    ts=False)
-        self._add_common_params(base, beta_prior, None, njobs, nchoices,
-                                True, None, assume_unique_reward, assign_algo = True,
-                                prior_def_ucb = True)
+        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+                                True, None, False, assume_unique_reward,
+                                random_state, assign_algo=True, prior_def_ucb=True)
 
     def _add_common_lin(self, alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs):
         if isinstance(alpha, int):
@@ -1845,6 +2046,12 @@ class LinTS(LinUCB):
     ----
     The 'X' data (covariates) should ideally be centered before passing them
     to 'fit', 'partial_fit', 'predict'.
+
+    Note
+    ----
+    Be aware that sampling coefficients is an operation that scales poorly with
+    the number of columns/features/variables. For wide datasets, it might be
+    slower than a bootstrapped approach, especially when using ``sample_unique=True``.
     
     Parameters
     ----------
@@ -1859,6 +2066,15 @@ class LinTS(LinUCB):
         implementation allows to change it.
     fit_intercept : bool
         Whether to add an intercept term to the coefficients.
+    sample_unique : bool
+        Whether to sample different coefficients each time a prediction is to
+        be made. If passing 'False', when calling 'predict', it will sample
+        the same coefficients for all the observations in the same call to
+        'predict', whereas if passing 'True', will use a different set of
+        coefficients for each observations. Passing 'False' leads to an
+        approach which is theoretically wrong, but as sampling coefficients
+        can be very slow, using 'False' can provide a reasonable speed up
+        without much of a performance penalty.
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
@@ -1884,10 +2100,27 @@ class LinTS(LinUCB):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Note that it is technically incorrect to apply smoothing like this (because
+        the predictions from models are not bounded between zero and one), but
+        if neither ``beta_prior``, nor ``smoothing`` are passed, the policy can get
+        stuck in situations in which it will only choose actions from the first batch
+        of observations to which it is fit.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is only used when
+        passing ``beta_prior``.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
@@ -1901,19 +2134,18 @@ class LinTS(LinUCB):
            International Conference on Machine Learning. 2013.
     """
     def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, fit_intercept=True,
-                 use_float=True, method="sm",
-                 beta_prior=None,
-                 assume_unique_reward=False,
-                 njobs = 1):
+                 sample_unique=False, use_float=True, method="sm",
+                 beta_prior=None, smoothing=None, assume_unique_reward=False,
+                 random_state=None, njobs = 1):
         self._ts = True
         self._add_common_lin(v_sq, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.v_sq, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
-                                   ts=True)
-        self._add_common_params(base, beta_prior, None, njobs, nchoices,
-                                True, None, assume_unique_reward, assign_algo = True,
-                                prior_def_ucb = False)
+                                   ts=True, sample_unique=sample_unique)
+        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+                                True, None, False, assume_unique_reward,
+                                random_state, assign_algo=True, prior_def_ucb=False)
 
 class BayesianUCB(_BasePolicyWithExploit):
     """
@@ -1923,10 +2155,9 @@ class BayesianUCB(_BasePolicyWithExploit):
     
     Note
     ----
-    The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
-    This is a very, very slow implementation, and will probably take at least two
-    orders or magnitude more to fit compared to other methods. It's not advised
-    to use it unless having a very good GPU that PyMC3 could use.
+    The implementation here uses PyMC3's GLM formula with either MCMC sampling
+    or ADVI. This is a very, very slow implementation, and will probably take at
+    least two or three orders or magnitude more to fit compared to other methods. It's not advised to use it unless having a very good GPU that PyMC3 could use.
     
     Parameters
     ----------
@@ -1936,14 +2167,15 @@ class BayesianUCB(_BasePolicyWithExploit):
         custom name.
     percentile : int [0,100]
         Percentile of the predictions sample to take.
-    method : str, either 'advi' or 'nuts'
-        Method used to sample coefficients (see PyMC3's documentation for mode details).
+    method : str, either 'advi', 'nuts', or 'metropolis'
+        Method used to sample coefficients (see PyMC3's documentation for details).
     n_samples : int
         Number of samples to take when making predictions.
     n_iter : int or str 'auto'
         Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
         will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
-        If passing 'auto', will use 2000 for ADVI and 100 for NUTS, but this might me insufficient.
+        If passing 'auto', will use 5000 for ADVI, 10000 for NUTS, and 25000 for
+        Metropolis, but this might me insufficient, especially for large datasets.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -1962,22 +2194,30 @@ class BayesianUCB(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
         and if these have multi-threading enabled, it might result in a slow-down
         as both functions compete for available threads.
     """
-    def __init__(self, nchoices, percentile=80, method='advi', n_samples=20, n_iter='auto',
+    def __init__(self, nchoices, percentile=80, method='advi', n_samples=50, n_iter='auto',
                  beta_prior='auto', smoothing=None,
-                 assume_unique_reward=False, njobs=1):
+                 assume_unique_reward=False, random_state=None, njobs=1):
         warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
         ## TODO: add a 'partial_fit' with stochastic variational inference.
         self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
-                                False, None, assume_unique_reward, assign_algo = False, prior_def_ucb = True)
+                                False, None, False, assume_unique_reward,
+                                random_state, assign_algo=False, prior_def_ucb=True)
         assert (percentile >= 0) and (percentile <= 100)
         self.percentile = percentile
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
@@ -1997,10 +2237,15 @@ class BayesianTS(_BasePolicyWithExploit):
 
     Note
     ----
-    The implementation here uses PyMC3's GLM formula with default parameters and ADVI.
-    This is a very, very slow implementation, and will probably take at least two
-    orders or magnitude more to fit compared to other methods. It's not advised
-    to use it unless having a very good GPU that PyMC3 could use.
+    The implementation here uses PyMC3's GLM formula with either MCMC sampling
+    or ADVI. This is a very, very slow implementation, and will probably take at
+    least two or three orders or magnitude more to fit compared to other methods. It's not advised to use it unless having a very good GPU that PyMC3 could use.
+
+    Note
+    ----
+    Unlike the other Thompson sampling classes, this class
+    does not offer the option 'sample_unique' - it's equivalent to
+    always having `False` for that parameter in the other methods.
     
     Parameters
     ----------
@@ -2008,14 +2253,15 @@ class BayesianTS(_BasePolicyWithExploit):
         Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
-    method : str, either 'advi' or 'nuts'
-        Method used to sample coefficients (see PyMC3's documentation for mode details).
+    method : str, either 'advi', 'nuts', or 'metropolis'
+        Method used to sample coefficients (see PyMC3's documentation for details).
     n_samples : int
         Number of samples to take when making predictions.
-    n_iter : int
+    n_iter : int or str 'auto'
         Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
         will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
-        If passing 'auto', will use 2000 for ADVI and 100 for NUTS, but this might me insufficient.
+        If passing 'auto', will use 5000 for ADVI, 10000 for NUTS, and 25000 for
+        Metropolis, but this might me insufficient, especially for large datasets.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -2032,15 +2278,22 @@ class BayesianTS(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
         and if these have multi-threading enabled, it might result in a slow-down
         as both functions compete for available threads.
     """
-    def __init__(self, nchoices, method='advi', n_samples=20, n_iter='auto',
+    def __init__(self, nchoices, method='advi', n_samples=50, n_iter='auto',
                  beta_prior='auto', smoothing=None,
-                 assume_unique_reward=False, njobs=1):
+                 assume_unique_reward=False, random_state=None, njobs=1):
         warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
 
         ## NOTE: this is a really slow and poorly thought implementation
@@ -2048,7 +2301,8 @@ class BayesianTS(_BasePolicyWithExploit):
         ##       or with a hard-coded coordinate ascent procedure instead. 
         ## TODO: add a 'partial_fit' with stochastic variational inference.
         self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
-                                False, None, assume_unique_reward, assign_algo=False)
+                                False, None, False, assume_unique_reward,
+                                random_state, assign_algo=False)
         self.nchoices = nchoices
         self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
         self.method = method

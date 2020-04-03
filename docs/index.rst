@@ -76,7 +76,6 @@ Policy Evaluation
 Linear Regression
 =================================
 
-This linear regression class keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once (as opposed to stochastic methods which don't have such property). Ideal for the online methods of this package when using them with streaming data.
 
 .. automodule:: contextualbandits.linreg
     :members:

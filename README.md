@@ -62,7 +62,7 @@ You can find detailed usage examples with public datasets in the following IPyth
 ## Documentation
 
 Package documentation is available in readthedocs:
-[http://contextual-bandits.readthedocs.io/en/latest/](http://contextual-bandits.readthedocs.io/en/latest/)
+[http://contextual-bandits.readthedocs.io](http://contextual-bandits.readthedocs.io)
 
 Documentation is also internally available through docstrings (e.g. you can try `help(contextualbandits.online.BootstrappedUCB)`, `help(contextualbandits.online.BootstrappedUCB.fit)`, etc.).
 
@@ -75,6 +75,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 * Added a linear regression class which keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once.
 * Added functionality for `refit_buffer` in the batch/streaming train mode (see docs for details).
 * Added option to use base classifier's `warm_start` if available (for faster model fitting).
+* Added a `random_state` parameter to the methods for getting reproducible results.
 * Updated the online example notebook for better results with both full-refit and streaming-mode versions after the latest additions.
 
 
@@ -82,12 +83,12 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 Methods in this package include:
  
-Online:
+Online linear models:
 * LinUCB (see [2] and [11]) 
 * Linear Thompson Sampling (see [4])
-* Logistic upper confidence bounds and Thompson sampling (see [1])
+* Logistic UCB and Thompson sampling (see [1])
 
-Generalized adaptations from multi-armed bandits strategies:
+Adaptations from multi-armed bandits taking black-box classifiers:
 * Upper Confidence Bound (see [1], [6] and [3])
 * Thompson Sampling (see [1] and [3])
 * Epsilon Greedy (see [1], [7] and [6])
@@ -132,7 +133,7 @@ Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (
 
 Many of this package's methods assume that the binary classification algorithms used have probabilistic outputs (e.g. `DoublyRobustEstimator`), ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation (otherwise will assume the outputs from `predict` are bounded between zero and one). Under some of the online algorithms (e.g. `SoftmaxExplorer`, `AdaptiveGreedy`) or if using smoothing, this will not work very well with SVM and some forms of gradient boosting, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
-Be aware that this is a research-oriented package, and has not been optimized for speed.
+Be aware that this is a research-oriented package, and is meant to provide flexibility at the expense of speed.
 
 ## References
 

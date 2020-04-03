@@ -320,7 +320,7 @@ class LinearRegression(BaseEstimator):
         pred[:] += alpha * np.sqrt(ci)
         return pred
 
-    def predict_thompson(self, X, v_sq=1.0):
+    def predict_thompson(self, X, v_sq=1.0, sample_unique=False, random_state=None):
         """
         Make a guess prediction on new data
 
@@ -340,6 +340,20 @@ class LinearRegression(BaseEstimator):
         v_sq : float > 0
             The multiplier for the covariance matrix. Larger values lead to
             more variable results.
+        sample_unique : bool
+            Whether to sample different coefficients each time a prediction is to
+            be made. If passing 'False', when calling 'predict', it will sample
+            the same coefficients for all the observations in the same call to
+            'predict', whereas if passing 'True', will use a different set of
+            coefficients for each observations. Passing 'False' leads to an
+            approach which is theoretically wrong, but as sampling coefficients
+            can be very slow, using 'False' can provide a reasonable speed up
+            without much of a performance penalty.
+        random_state : None or np.random.RandomState
+            A NumPy 'RandomState' object instance to use for generating
+            random numbers. If passing 'None', will use NumPy's random
+            module directly (which can be made reproducible through
+            ``np.random.seed``).
 
         Returns
         -------
@@ -360,13 +374,41 @@ class LinearRegression(BaseEstimator):
             v_sq = float(v_sq)
         assert isinstance(v_sq, float)
 
-        coef = np.random.multivariate_normal(mean=self.coef_,
-                                             cov=v_sq * self._invXtX,
-                                             size=X.shape[0])
-        if not issparse(X):
-            pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
+        tol = 1e-20
+        if np.linalg.det(self._invXtX) >= tol:
+            cov = self._invXtX
         else:
-            pred = X.multiply(coef[:,:X.shape[1]]).sum(axis=1)
-        if self.fit_intercept:
-            pred[:] += coef[:,-1]
+            cov = self._invXtX.copy()
+            n = cov.shape[1]
+            for i in range(10):
+                cov[np.arange(n), np.arange(n)] += 1e-1
+                if np.linalg.det(cov) >= tol:
+                    break
+
+        if sample_unique:
+            if random_state is None:
+                coef = np.random.multivariate_normal(mean=self.coef_,
+                                                     cov=v_sq * cov,
+                                                     size=X.shape[0])
+            else:
+                coef = random_state.multivariate_normal(mean=self.coef_,
+                                                        cov=v_sq * cov,
+                                                        size=X.shape[0])
+            if not issparse(X):
+                pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
+            else:
+                pred = X.multiply(coef[:,:X.shape[1]]).sum(axis=1)
+            if self.fit_intercept:
+                pred[:] += coef[:,-1]
+        else:
+            if random_state is None:
+                coef = np.random.multivariate_normal(mean=self.coef_,
+                                                     cov=v_sq * cov)
+            else:
+                coef = random_state.multivariate_normal(mean=self.coef_,
+                                                        cov=v_sq * cov)
+            pred = X.dot(coef[:X.shape[1]])
+            if self.fit_intercept:
+                pred[:] += coef[-1]
+
         return pred

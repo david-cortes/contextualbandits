@@ -2,8 +2,8 @@
 
 import numpy as np
 from contextualbandits.utils import _check_constructor_input, _check_fit_input, \
-    _check_X_input, _check_1d_inp, _check_beta_prior, _check_smoothing, _check_njobs, \
-    _OnePredictor, _ZeroPredictor, _RandomPredictor
+    _check_X_input, _check_1d_inp, _check_beta_prior, _check_smoothing, \
+    _check_njobs, _check_random_state, _OnePredictor, _ZeroPredictor, _RandomPredictor
 from contextualbandits.online import SeparateClassifiers
 from copy import deepcopy
 from joblib import Parallel, delayed
@@ -77,6 +77,11 @@ class DoublyRobustEstimator:
         Whether to use Regression One-Vs-Rest or Weighted All-Pairs (see Note 1)
     handle_invalid : bool
         Whether to replace 0/1 estimated rewards with randomly-generated numbers (see Note 2)
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is used when passing
+        ``handle_invalid=True`` or ``beta_prior != None``.
     c : None or float
         Constant by which to multiply all scores from the exploration policy.
     pmin : None or float
@@ -88,6 +93,9 @@ class DoublyRobustEstimator:
     smoothing : tuple(a, b) or None
         Smoothing parameter to pass to 'SeparateClassifiers' Only used when passing to 'reward_estimator'
         a classifier with 'predict_proba'.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores.
     kwargs_costsens
         Additional keyword arguments to pass to the cost-sensitive classifier.
     
@@ -99,7 +107,8 @@ class DoublyRobustEstimator:
            Statistical Science 29.4 (2014): 485-511.
     """
     def __init__(self, base_algorithm, reward_estimator, nchoices, method='rovr',
-                 handle_invalid=True, c=None, pmin=1e-5, beta_prior=None, smoothing=(1,2), **kwargs_costsens):
+                 handle_invalid=True, random_state=1, c=None, pmin=1e-5,
+                 beta_prior=None, smoothing=(1,2), njobs=-1, **kwargs_costsens):
         assert (method == 'rovr') or (method == 'wap')
         self.method = method
         if method == 'wap':
@@ -130,8 +139,10 @@ class DoublyRobustEstimator:
         self.c = c
         self.pmin = pmin
         self.handle_invalid = handle_invalid
+        self.random_state = _check_random_state(random_state)
         self.beta_prior = beta_prior
         self.smoothing = _check_smoothing(smoothing)
+        self.njobs = _check_njobs(njobs)
         self.kwargs_costsens = kwargs_costsens
     
     def fit(self, X, a, r, p):
@@ -162,15 +173,18 @@ class DoublyRobustEstimator:
         elif 'predict_proba_separate' in dir(self.reward_estimator):
             C = -self.reward_estimator.predict_proba_separate(X)
         elif 'predict_proba' in dir(self.reward_estimator):
-            reward_estimator = SeparateClassifiers(self.reward_estimator, self.nchoices, beta_prior = self.beta_prior, smoothing = self.smoothing)
+            reward_estimator = \
+                SeparateClassifiers(self.reward_estimator, self.nchoices,
+                    beta_prior = self.beta_prior, smoothing = self.smoothing,
+                    random_state = self.random_state, njobs = self.njobs)
             reward_estimator.fit(X, a, r)
             C = -reward_estimator.predict_proba_separate(X)
         else:
             raise ValueError("Error: couldn't obtain reward estimates. Are you passing the right input to 'reward_estimator'?")
         
         if self.handle_invalid:
-            C[C == 1] = np.random.beta(3, 1, size = C.shape)[C == 1]
-            C[C == 0] = np.random.beta(1, 3, size = C.shape)[C == 0]
+            C[C == 1] = self.random_state.beta(3, 1, size = C.shape)[C == 1]
+            C[C == 0] = self.random_state.beta(1, 3, size = C.shape)[C == 0]
         
         if self.c is not None:
             p = self.c * p
@@ -179,9 +193,13 @@ class DoublyRobustEstimator:
         
         C[np.arange(C.shape[0]), a] += (l - C[np.arange(C.shape[0]), a]) / p.reshape(-1)
         if self.method == 'rovr':
-            self.oracle = RegressionOneVsRest(self.base_algorithm, **self.kwargs_costsens)
+            self.oracle = RegressionOneVsRest(self.base_algorithm,
+                                              njobs = self.njobs,
+                                              **self.kwargs_costsens)
         else:
-            self.oracle = WeightedAllPairs(self.base_algorithm, **self.kwargs_costsens)
+            self.oracle = WeightedAllPairs(self.base_algorithm,
+                                           njobs = self.njobs,
+                                           **self.kwargs_costsens)
         self.oracle.fit(X, C)
     
     def predict(self, X):
@@ -234,6 +252,16 @@ class OffsetTree:
         Binary classifier to be used for each classification sub-problem in the tree.
     nchoices : int
         Number of arms/labels to choose from.
+    c : None or float
+        Constant by which to multiply all scores from the exploration policy.
+    pmin : None or float
+        Scores (from the exploration policy) will be converted to the minimum between
+        pmin and the original estimate.
+    random_state : int, None, or RandomState
+        Either an integer which will be used as seed for initializing a
+        ``RandomState`` object for random number generation, or a ``RandomState``
+        object (from NumPy), which will be used directly. This is used when
+        predictions need to be done for an arm with no data.
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
@@ -245,7 +273,8 @@ class OffsetTree:
     .. [1] Beygelzimer, Alina, and John Langford. "The offset tree for learning with partial labels."
            Proceedings of the 15th ACM SIGKDD international conference on Knowledge discovery and data mining. ACM, 2009.
     """
-    def __init__(self, base_algorithm, nchoices, c = None, pmin = 1e-5, njobs = -1):
+    def __init__(self, base_algorithm, nchoices, c = None, pmin = 1e-5,
+                 random_state = 1, njobs = -1):
         try:
             from costsensitive import _BinTree
         except:
@@ -260,6 +289,7 @@ class OffsetTree:
             assert isinstance(pmin, float)
         self.c = c
         self.pmin = pmin
+        self.random_state = _check_random_state(random_state)
         self.njobs = _check_njobs(njobs)
     
     def fit(self, X, a, r, p):
@@ -287,9 +317,12 @@ class OffsetTree:
             p = np.clip(p, a_min = self.pmin, a_max = None)
         
         self._oracles = [deepcopy(self.base_algorithm) for c in range(self.nchoices - 1)]
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._fit)(classif, X, a, r, p) for classif in range(len(self._oracles)))
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                (delayed(self._fit)(classif, X, a, r, p,
+                                    self.random_state.randint(np.iinfo(np.int32).max)) \
+                    for classif in range(len(self._oracles)))
 
-    def _fit(self, classif, X, a, r, p):
+    def _fit(self, classif, X, a, r, p, rs):
         obs_take = np.in1d(a, self.tree.node_comparisons[classif][0])
         X_node = X[obs_take, :]
         a_node = a[obs_take]
@@ -306,7 +339,7 @@ class OffsetTree:
         w_node = w_node * w_node.shape[0] / np.sum(w_node)
         
         if y_node.shape[0] == 0:
-            self._oracles[classif] = _RandomPredictor()
+            self._oracles[classif] = _RandomPredictor(rs)
         elif y_node.sum() == y_node.shape[0]:
             self._oracles[classif] = _OnePredictor()
         elif y_node.sum() == 0:
@@ -338,7 +371,9 @@ class OffsetTree:
         pred = np.zeros(X.shape[0])
         shape_single = list(X.shape)
         shape_single[0] = 1
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(delayed(self._predict)(pred, i, shape_single, X) for i in range(X.shape[0]))
+        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
+                (delayed(self._predict)(pred, i, shape_single, X) \
+                    for i in range(X.shape[0]))
         return np.array(pred).astype('int64')
 
     def _predict(self, pred, i, shape_single, X):
