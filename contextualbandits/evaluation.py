@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 
 import pandas as pd, numpy as np
-from contextualbandits.utils import _check_fit_input, _check_1d_inp, \
+from .utils import _check_fit_input, _check_1d_inp, \
         _check_X_input, _check_random_state
-from contextualbandits.online import SeparateClassifiers
+from .online import SeparateClassifiers
 
 def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                               start_point_online='random', random_state=1,
-                              batch_size=10):
+                              update_freq=10):
     """
     Evaluate a policy using rejection sampling on test data.
     
@@ -41,9 +41,9 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         ``RandomState`` object for random number generation, or a ``RandomState``
         object (from NumPy), which will be used directly. This is only used when
         passing ``start_point_online='random'``.
-    batch_size : int
+    update_freq : int
         After how many rounds to refit the policy being evaluated.
-        Only used when passing online=True.
+        Only used when passing ``online=True``.
         
     Returns
     -------
@@ -58,7 +58,7 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
     X,a,r=_check_fit_input(X,a,r)
     if start_point_online=='random':
         random_state = _check_random_state(random_state)
-        start_point_online = random_state.randint(X.shape[0])
+        start_point_online = random_state.integers(X.shape[0])
     else:
         if isinstance(start_point_online, int):
             pass
@@ -86,12 +86,12 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                 cum_r+=r[i]
                 cum_n+=1
                 ix_chosen.append(i)
-                if (cum_n%batch_size)==0:
+                if (cum_n%update_freq)==0:
                     if not partial_fit:
                         ix_fit=np.array(ix_chosen)
                         policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
                     else:
-                        ix_fit = np.array(ix_chosen[:-(batch_size+1):-1])
+                        ix_fit = np.array(ix_chosen[:-(update_freq+1):-1])
                         policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
         for i in range(0, start_point_online):
             obs=X[i].reshape(1,-1)
@@ -100,12 +100,12 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                 cum_r+=r[i]
                 cum_n+=1
                 ix_chosen.append(i)
-                if (cum_n%batch_size)==0:
+                if (cum_n%update_freq)==0:
                     if not partial_fit:
                         ix_fit=np.array(ix_chosen)
                         policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
                     else:
-                        ix_fit = np.array(ix_chosen)[:-(batch_size+1):-1]
+                        ix_fit = np.array(ix_chosen)[:-(update_freq+1):-1]
                         policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
         if cum_n==0:
             raise ValueError("Rejection sampling couldn't obtain any matching samples.")
@@ -299,7 +299,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
     
     ## initial seed
     batch_features = X[:update_freq,:]
-    batch_actions = rs.randint(y_onehot.shape[1], size=update_freq)
+    batch_actions = rs.integers(y_onehot.shape[1], size=update_freq)
     batch_rewards = y_onehot[np.arange(update_freq), batch_actions]
     
     if online:

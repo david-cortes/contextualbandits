@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np, warnings
-from contextualbandits.utils import _check_constructor_input, _check_beta_prior, \
+from .utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
             _ZeroPredictor, _OnePredictor, _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
@@ -12,7 +12,7 @@ from contextualbandits.utils import _check_constructor_input, _check_beta_prior,
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single
-from joblib import Parallel, delayed
+from ._cy_utils import _choice_over_rows
 
 class _BasePolicy:
     def __init__(self):
@@ -296,7 +296,7 @@ class _BasePolicy:
     def _predict_random_if_unfit(self, X, output_score):
         warnings.warn("Model object has not been fit to data, predictions will be random.")
         X = _check_X_input(X)
-        pred = self._name_arms(self.random_state.randint(self.nchoices, size = X.shape[0]))
+        pred = self._name_arms(self.random_state.integers(self.nchoices, size = X.shape[0]))
         if not output_score:
             return pred
         else:
@@ -451,10 +451,13 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -462,11 +465,16 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         Number of parallel jobs to run (for dividing work across arms). If passing None will set it to 1.
         If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
         parallelized, this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both. The total number of parallel jobs will be njobs_arms * njobs_samples.
+        parallelization in both. The total number of parallel jobs will be njobs_arms * njobs_samples. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
     njobs_samples : int or None
         Number of parallel jobs to run (for dividing work across samples within one arm). If passing None
         will set it to 1. If passing -1 will set it to the number of CPU cores. The total number of parallel
         jobs will be njobs_arms * njobs_samples.
+        The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
 
     References
     ----------
@@ -567,10 +575,13 @@ class BootstrappedTS(_BasePolicyWithExploit):
     batch_sample_method : str, either 'gamma' or 'poisson'
         How to simulate bootstrapped samples when training in batch mode (online).
         See Note.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -579,10 +590,16 @@ class BootstrappedTS(_BasePolicyWithExploit):
         If passing -1 will set it to the number of CPU cores. Note that if the base algorithm is itself
         parallelized, this might result in a slowdown as both compete for available threads, so don't set
         parallelization in both. The total number of parallel jobs will be njobs_arms * njobs_samples.
+        The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
     njobs_samples : int or None
         Number of parallel jobs to run (for dividing work across samples within one arm). If passing None
         will set it to 1. If passing -1 will set it to the number of CPU cores. The total number of parallel
         jobs will be njobs_arms * njobs_samples.
+        The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
     
     References
     ----------
@@ -656,11 +673,13 @@ class LogisticUCB(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -760,11 +779,13 @@ class LogisticTS(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -859,11 +880,13 @@ class SeparateClassifiers(_BasePolicy):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -871,7 +894,9 @@ class SeparateClassifiers(_BasePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
 
     References
     ----------
@@ -1025,10 +1050,13 @@ class EpsilonGreedy(_BasePolicy):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1036,7 +1064,9 @@ class EpsilonGreedy(_BasePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
     
     References
     ----------
@@ -1087,7 +1117,7 @@ class EpsilonGreedy(_BasePolicy):
         pred = np.argmax(scores, axis = 1)
         if not exploit:
             ix_change_rnd = (self.random_state.random(size =  X.shape[0]) <= self.explore_prob)
-            pred[ix_change_rnd] = self.random_state.randint(self.nchoices, size = ix_change_rnd.sum())
+            pred[ix_change_rnd] = self.random_state.integers(self.nchoices, size = ix_change_rnd.sum())
         pred = self._name_arms(pred)
 
         if self.decay is not None:
@@ -1101,7 +1131,7 @@ class EpsilonGreedy(_BasePolicy):
             return {"choice" : pred, "score" : score_max}
 
 class _ActivePolicy(_BasePolicy):
-
+    ### TODO: parallelize this in cython for the default case
     def _crit_active(self, X, pred, grad_crit):
         for choice in range(self.nchoices):
             if self._oracles.should_calculate_grad(choice) or self._force_fit:
@@ -1110,24 +1140,23 @@ class _ActivePolicy(_BasePolicy):
                         self._rand_grad_norms(X,
                                               self._oracles.get_n_pos(choice),
                                               self._oracles.get_n_neg(choice),
-                                              self.random_state)
+                                              self._oracles.rng_arm[choice])
                 else:
                     grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
             else:
                 grad_norms = self._rand_grad_norms(X,
                                                    self._oracles.get_n_pos(choice),
                                                    self._oracles.get_n_neg(choice),
-                                                   self.random_state)
+                                                   self._oracles.rng_arm[choice])
 
             if grad_crit == 'min':
                 pred[:, choice] = grad_norms.min(axis = 1)
             elif grad_crit == 'max':
                 pred[:, choice] = grad_norms.max(axis = 1)
             elif grad_crit == 'weighted':
-                pred[:, choice] = (pred[:, choice].reshape((-1, 1)) * grad_norms).sum(axis = 1)
+                pred[:, choice] = np.einsum("i,ij->i", pred[:, choice], grad_norms)
             else:
                 raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
-
         return pred
 
 
@@ -1230,7 +1259,7 @@ class AdaptiveGreedy(_ActivePolicy):
     active_choice : None or str in {'min', 'max', 'weighted'}
         How to select arms when predictions are below the threshold. If passing None, selects them at random (default).
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
-        Non-random active selection requires being able to calculate gradients (gradients for logistic regression
+        Non-random active selection requires being able to calculate gradients (gradients for logistic regression and linear regression (from this package)
         are already defined with an option 'auto' below).
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
@@ -1238,23 +1267,29 @@ class AdaptiveGreedy(_ActivePolicy):
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, random_state) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
         problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed, a ``RandomState``
+        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
         object from NumPy to use for generating random numbers.
         If passing 'auto', will generate random numbers:
+
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
         If passing 'zero', it will output zero whenever models have not been fitted.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1262,7 +1297,9 @@ class AdaptiveGreedy(_ActivePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
     
     References
     ----------
@@ -1404,7 +1441,7 @@ class AdaptiveGreedy(_ActivePolicy):
 
     def _choose_greedy(self, set_greedy, X, pred, pred_all):
         if self.active_choice is None:
-            pred[set_greedy] = self.random_state.randint(self.nchoices, size = set_greedy.sum())
+            pred[set_greedy] = self.random_state.integers(self.nchoices, size = set_greedy.sum())
         else:
             pred[set_greedy] = np.argmax(
                 self._crit_active(
@@ -1478,10 +1515,13 @@ class ExploreFirst(_BasePolicy):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1489,7 +1529,9 @@ class ExploreFirst(_BasePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
 
     References
     ----------
@@ -1545,13 +1587,13 @@ class ExploreFirst(_BasePolicy):
             
             # case 1: all predictions are within allowance
             if self.explore_cnt <= self.explore_rounds:
-                return self.random_state.randint(self.nchoices, size = X.shape[0])
+                return self.random_state.integers(self.nchoices, size = X.shape[0])
             
             # case 2: some predictions are within allowance, others are not
             else:
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
-                pred = np.empty(X.shape[0], type = "float64")
-                pred[:n_explore] = self.random_state.randint(self.nchoices, n_explore)
+                pred = np.empty(X.shape[0], type = np.float64)
+                pred[:n_explore] = self.random_state.integers(self.nchoices, n_explore)
                 pred[n_explore:] = self._oracles.predict(X[n_explore:])
                 return pred
         else:
@@ -1589,18 +1631,21 @@ class ActiveExplorer(_ActivePolicy):
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, random_state) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
         If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
         problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
         If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
         arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that has been observed, a ``RandomState``
+        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
         object from NumPy to use for generating random numbers.
         If passing 'auto', will generate random numbers:
+
             negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
         If passing 'zero', it will output zero whenever models have not been fitted.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
@@ -1651,11 +1696,13 @@ class ActiveExplorer(_ActivePolicy):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1663,7 +1710,9 @@ class ActiveExplorer(_ActivePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
 
     References
     ----------
@@ -1801,10 +1850,13 @@ class SoftmaxExplorer(_BasePolicy):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1812,7 +1864,9 @@ class SoftmaxExplorer(_BasePolicy):
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
         this might result in a slowdown as both compete for available threads, so don't set
-        parallelization in both.
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
 
     References
     ----------
@@ -1892,25 +1946,16 @@ class SoftmaxExplorer(_BasePolicy):
             if self.inflation_rate is not None:
                 self.multiplier *= self.inflation_rate ** pred.shape[0]
         _apply_softmax(pred)
-        chosen = np.empty(pred.shape[0], dtype = "int64")
-        rs = self.random_state.randint(np.iinfo(np.int32).max, size = pred.shape[0])
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._pick_pred)(i, chosen, pred, rs) \
-                    for i in range(pred.shape[0]))
+        chosen =  _choice_over_rows(pred, self.random_state, self.njobs)
+
         if output_score:
-            score_chosen = pred[np.arange(pred.shape[0]), np.array(chosen)]
+            score_chosen = pred[np.arange(pred.shape[0]), chosen]
         chosen = self._name_arms(chosen)
 
         if not output_score:
             return chosen
         else:
             return {"choice" : chosen, "score" : score_chosen}
-
-    def _pick_pred(self, i, chosen, pred, rs):
-        rs = np.random.RandomState(seed = rs[i])
-        if pred[i].sum() != 1.0: #floating point arithmetic issues
-            pred[i] = pred[i] / np.sum(pred[i])
-        chosen[i] = rs.choice(self.nchoices, p = pred[i])
 
 
 class LinUCB(_BasePolicyWithExploit):
@@ -1979,11 +2024,13 @@ class LinUCB(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2113,11 +2160,13 @@ class LinTS(LinUCB):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``beta_prior``.
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2194,10 +2243,13 @@ class BayesianUCB(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2278,10 +2330,13 @@ class BayesianTS(_BasePolicyWithExploit):
         Whether to assume that only one arm has a reward per observation. If set to True,
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``RandomState`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).

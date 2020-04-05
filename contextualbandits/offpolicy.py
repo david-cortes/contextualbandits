@@ -1,10 +1,10 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np
-from contextualbandits.utils import _check_constructor_input, _check_fit_input, \
+from .utils import _check_constructor_input, _check_fit_input, \
     _check_X_input, _check_1d_inp, _check_beta_prior, _check_smoothing, \
     _check_njobs, _check_random_state, _OnePredictor, _ZeroPredictor, _RandomPredictor
-from contextualbandits.online import SeparateClassifiers
+from .online import SeparateClassifiers
 from copy import deepcopy
 from joblib import Parallel, delayed
 
@@ -183,8 +183,8 @@ class DoublyRobustEstimator:
             raise ValueError("Error: couldn't obtain reward estimates. Are you passing the right input to 'reward_estimator'?")
         
         if self.handle_invalid:
-            C[C == 1] = self.random_state.beta(3, 1, size = C.shape)[C == 1]
-            C[C == 0] = self.random_state.beta(1, 3, size = C.shape)[C == 0]
+            C[C >= 1] = self.random_state.beta(3, 1, size = C.shape)[C >= 1]
+            C[C <= 0] = self.random_state.beta(1, 3, size = C.shape)[C <= 0]
         
         if self.c is not None:
             p = self.c * p
@@ -317,9 +317,9 @@ class OffsetTree:
             p = np.clip(p, a_min = self.pmin, a_max = None)
         
         self._oracles = [deepcopy(self.base_algorithm) for c in range(self.nchoices - 1)]
+        rs = self.random_state.integers(np.iinfo(np.int32).max, size=self.nchoices)
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._fit)(classif, X, a, r, p,
-                                    self.random_state.randint(np.iinfo(np.int32).max)) \
+                (delayed(self._fit)(classif, X, a, r, p, rs) \
                     for classif in range(len(self._oracles)))
 
     def _fit(self, classif, X, a, r, p, rs):
@@ -333,16 +333,17 @@ class OffsetTree:
         y = (  np.in1d(a_node, self.tree.node_comparisons[classif][2])  ).astype('uint8')
         
         y_node = y.copy()
-        y_node[r_more_onehalf] = 1 - y[r_more_onehalf]
+        y_node[r_more_onehalf] = 1. - y[r_more_onehalf]
         w_node = (.5 - r_node) / p_node
         w_node[r_more_onehalf] = (  (r_node - .5) / p_node  )[r_more_onehalf]
-        w_node = w_node * w_node.shape[0] / np.sum(w_node)
+        w_node = w_node * (w_node.shape[0] / np.sum(w_node))
         
+        n_pos = y_node.sum()
         if y_node.shape[0] == 0:
-            self._oracles[classif] = _RandomPredictor(rs)
-        elif y_node.sum() == y_node.shape[0]:
+            self._oracles[classif] = _RandomPredictor(_check_random_state(rs[classif]))
+        elif n_pos == y_node.shape[0]:
             self._oracles[classif] = _OnePredictor()
-        elif y_node.sum() == 0:
+        elif n_pos == 0:
             self._oracles[classif] = _ZeroPredictor()
         else:
             self._oracles[classif].fit(X_node, y_node, sample_weight = w_node)

@@ -20,3 +20,7 @@ contextualbandits.egg-info/*
 build/*
 contextualbandits/linreg/*.so
 contextualbandits/linreg/*.c
+contextualbandits/linreg/*.directory
+contextualbandits/*.so
+contextualbandits/*.c
+contextualbandits/*.directory

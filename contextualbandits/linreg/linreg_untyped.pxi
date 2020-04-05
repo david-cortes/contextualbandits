@@ -370,7 +370,7 @@ def update_running_noinv(
     )
 
     coef[:] = XtY
-    invXtX[:,:] = XtX.copy()
+    invXtX[:,:] = XtX[:,:]
     tposv(&lo, &n_plusb, &one_int, &invXtX[0,0], &n_plusb, &coef[0], &n_plusb, &ignore)
     if calc_inv:
         tpotri(&lo, &n_plusb, &invXtX[0,0], &n_plusb, &ignore)
@@ -428,7 +428,7 @@ def update_matrices_noinv(
     cdef CBLAS_ORDER x_ord = CblasRowMajor if not np.isfortran(X) else CblasColMajor
     if Xcsr is None:
         if w.shape[0] == 0:
-            cblas_tsyrk(x_ord, CblasUpper, CblasTrans,
+            cblas_tsyrk(x_ord, CblasUpper if (x_ord==CblasRowMajor) else CblasLower, CblasTrans,
                         n, m,
                         1., &X[0,0], n if (x_ord==CblasRowMajor) else m,
                         0. if overwrite else 1., &XtX[0,0], n_plusb)
@@ -466,7 +466,7 @@ def update_matrices_noinv(
             Xsum = X.sum(axis=0)
             XtX[n,n] += <realtp>m
         else:
-            Xsum = (X * w.reshape(-1,1)).sum(axis=0)
+            Xsum = np.einsum("ij,i->j", X, w)
             XtX[n,n] += <realtp> (w.sum())
         if overwrite:
             tcopy(&n, &Xsum[0], &one_int, &XtX[0,n], &n_plusb)
@@ -527,47 +527,49 @@ def update_matrices_inv(
 
     cdef long i
     if Xcsr is None:
-        for i in range(m):
-            cblas_tsymv(CblasRowMajor, CblasUpper, n,
-                        1., ptr_XtX_inv, n_plusb, prt_X + i*n, 1,
-                        0., ptr_x_vec, 1)
-            if (add_bias):
-                ptr_x_vec[n] = tdot(&n, ptr_XtX_inv + n, &n_plusb, prt_X + i*n, &one)
-                ptr_x_vec[n] += ptr_XtX_inv[n_plusb*n_plusb - 1]
-                taxpy(&n, &one_realtp, ptr_XtX_inv + n, &n_plusb, ptr_x_vec, &one)
+        with nogil:
+            for i in range(m):
+                cblas_tsymv(CblasRowMajor, CblasUpper, n,
+                            1., ptr_XtX_inv, n_plusb, prt_X + i*n, 1,
+                            0., ptr_x_vec, 1)
+                if (add_bias):
+                    ptr_x_vec[n] = tdot(&n, ptr_XtX_inv + n, &n_plusb, prt_X + i*n, &one)
+                    ptr_x_vec[n] += ptr_XtX_inv[n_plusb*n_plusb - 1]
+                    taxpy(&n, &one_realtp, ptr_XtX_inv + n, &n_plusb, ptr_x_vec, &one)
 
-            coef = tdot(&n, ptr_x_vec, &one, prt_X + i*n, &one)
-            if add_bias:
-                coef += ptr_x_vec[n]
-            coef = -1. / (1. + coef)
-            if ptr_w != NULL:
-                coef *= ptr_w[i]
+                coef = tdot(&n, ptr_x_vec, &one, prt_X + i*n, &one)
+                if add_bias:
+                    coef += ptr_x_vec[n]
+                coef = -1. / (1. + coef)
+                if ptr_w != NULL:
+                    coef *= ptr_w[i]
 
-            cblas_tsyr(CblasRowMajor, CblasUpper,
-                       n_plusb, coef, ptr_x_vec, 1,
-                       ptr_XtX_inv, n_plusb)
+                cblas_tsyr(CblasRowMajor, CblasUpper,
+                           n_plusb, coef, ptr_x_vec, 1,
+                           ptr_XtX_inv, n_plusb)
 
     else:
         cast_csr(Xcsr)
         ptr_csr_data = get_ptr_realtp(Xcsr.data)
         ptr_csr_indices = get_ptr_long(Xcsr.indices)
         ptr_csr_indptr = get_ptr_long(Xcsr.indptr)
-        for i in range(m):
-            tgemv_dense_sp(
-                ptr_XtX_inv, n_plusb,
-                ptr_csr_data, ptr_csr_indptr, ptr_csr_indices, i,
-                ptr_x_vec, add_bias
-            )
-            coef = tdot_dense_sp(ptr_x_vec, i,
-                                 ptr_csr_data, ptr_csr_indptr, ptr_csr_indices)
-            if add_bias:
-                coef += ptr_x_vec[n]
-            coef = -1. / (1. + coef)
-            if ptr_w != NULL:
-                coef *= ptr_w[i]
-            cblas_tsyr(CblasRowMajor, CblasUpper,
-                       n_plusb, coef, ptr_x_vec, 1,
-                       ptr_XtX_inv, n_plusb)
+        with nogil:
+            for i in range(m):
+                tgemv_dense_sp(
+                    ptr_XtX_inv, n_plusb,
+                    ptr_csr_data, ptr_csr_indptr, ptr_csr_indices, i,
+                    ptr_x_vec, add_bias
+                )
+                coef = tdot_dense_sp(ptr_x_vec, i,
+                                     ptr_csr_data, ptr_csr_indptr, ptr_csr_indices)
+                if add_bias:
+                    coef += ptr_x_vec[n]
+                coef = -1. / (1. + coef)
+                if ptr_w != NULL:
+                    coef *= ptr_w[i]
+                cblas_tsyr(CblasRowMajor, CblasUpper,
+                           n_plusb, coef, ptr_x_vec, 1,
+                           ptr_XtX_inv, n_plusb)
 
     if ptr_w != NULL:
         y = y * w
@@ -670,39 +672,37 @@ def x_A_x_batch(
     cdef realtp *ptr_outp = &outp[0]
 
     if Xcsr is None:
-        if np.isfortran(X):
-            X = np.ascontiguousarray(X)
-        elif copy_X:
-            X = X.copy()
+        X = np.require(X, dtype=C_realtp, requirements=["C_CONTIGUOUS", "OWNDATA", "WRITEABLE"])
 
         tempX = np.zeros((m, n_plusb), dtype=C_realtp)
         ptr_tempX = &tempX[0,0]
         ptr_X = &X[0,0]
 
-        cblas_tsymm(CblasRowMajor, CblasRight, CblasUpper,
-                    m, n,
-                    1., ptr_invXtX, n_plusb,
-                    ptr_X, n,
-                    0., ptr_tempX, n_plusb)
-
-        for i in range(m):
-            ptr_outp[i] = tdot(&n, ptr_tempX + i*n_plusb, &one_int, ptr_X + i*n, &one_int)
-
-        if add_bias:
-            cblas_tgemv(CblasRowMajor, CblasNoTrans,
+        with nogil:
+            cblas_tsymm(CblasRowMajor, CblasRight, CblasUpper,
                         m, n,
-                        2., ptr_X, n, ptr_invXtX + n, n_plusb,
-                        1., ptr_outp, 1)
-            outp[:] += invXtX[n,n]
+                        1., ptr_invXtX, n_plusb,
+                        ptr_X, n,
+                        0., ptr_tempX, n_plusb)
+            for i in range(m):
+                ptr_outp[i] = tdot(&n, ptr_tempX + i*n_plusb, &one_int, ptr_X + i*n, &one_int)
 
+            if add_bias:
+                cblas_tgemv(CblasRowMajor, CblasNoTrans,
+                            m, n,
+                            2., ptr_X, n, ptr_invXtX + n, n_plusb,
+                            1., ptr_outp, 1)
+                for i in range(m):
+                    ptr_outp[i] += ptr_invXtX[n_plusb*n_plusb - 1]
 
     else:
         if Xcsr.dtype != C_realtp:
             Xcsr = Xcsr.astype(C_realtp)
 
-        for i in range(n_plusb):
-            for j in range(i):
-                ptr_invXtX[j + i*n_plusb] = ptr_invXtX[i + j*n_plusb]
+        with nogil:
+            for i in range(n_plusb):
+                for j in range(i):
+                    ptr_invXtX[j + i*n_plusb] = ptr_invXtX[i + j*n_plusb]
 
         tempXcsr = Xcsr.dot(invXtX[:n,:n])
         outp[:] = Xcsr.multiply(tempXcsr).sum(axis=1).reshape(-1)

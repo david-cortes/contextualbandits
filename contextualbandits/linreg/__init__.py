@@ -349,7 +349,7 @@ class LinearRegression(BaseEstimator):
             approach which is theoretically wrong, but as sampling coefficients
             can be very slow, using 'False' can provide a reasonable speed up
             without much of a performance penalty.
-        random_state : None or np.random.RandomState
+        random_state : None, np.random.Generator, or np.random.RandomState
             A NumPy 'RandomState' object instance to use for generating
             random numbers. If passing 'None', will use NumPy's random
             module directly (which can be made reproducible through

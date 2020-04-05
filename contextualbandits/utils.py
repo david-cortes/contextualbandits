@@ -2,11 +2,12 @@ import numpy as np, types, warnings, multiprocessing
 from copy import deepcopy
 from joblib import Parallel, delayed
 import pandas as pd
-from scipy.linalg import blas
+import ctypes
 from scipy.stats import norm as norm_dist
 from scipy.sparse import issparse, isspmatrix_csr, csr_matrix
 from sklearn.linear_model import LogisticRegression
-from .linreg import LinearRegression, _wrapper_double, _wrapper_float
+from .linreg import LinearRegression, _wrapper_double
+from ._cy_utils import _matrix_inv_symm
 
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
@@ -79,16 +80,16 @@ def _check_refit_buffer(refit_buffer, batch_train):
     return refit_buffer
 
 def _check_random_state(random_state):
-    if isinstance(random_state, np.random.RandomState):
+    if random_state is None:
+        return np.random.Generator(np.random.MT19937())
+    if isinstance(random_state, np.random.Generator):
         return random_state
-    elif (random_state is None) or (random_state == np.random):
-        return np.random
-    else:
-        if isinstance(random_state, float):
-            random_state = int(random_state)
-        assert random_state > 0
-        assert isinstance(random_state, int)
-        return np.random.RandomState(seed = random_state)
+    elif isinstance(random_state, np.random.RandomState) or (random_state == np.random):
+        random_state = int(random_state.randint(np.iinfo(np.int32).max) + 1)
+    if isinstance(random_state, float):
+        random_state = int(random_state)
+    assert random_state > 0
+    return np.random.Generator(np.random.MT19937(seed = random_state))
 
 def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
     if isinstance(base_algorithm, list):
@@ -128,7 +129,7 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
         assert isinstance(beta_prior[1], int)
         assert isinstance(beta_prior[0][0], int) or isinstance(beta_prior[0][0], float)
         assert isinstance(beta_prior[0][1], int) or isinstance(beta_prior[0][1], float)
-        assert (beta_prior[0][0] > 0) and (beta_prior[0][1] > 0)
+        assert (beta_prior[0][0] > 0.) and (beta_prior[0][1] > 0.)
         out = beta_prior
     return out
 
@@ -154,12 +155,12 @@ def _check_fit_input(X, a, r, choice_names = None):
     return X, a, r
 
 def _check_X_input(X):
-    if X.__class__.__name__ == 'DataFrame':
+    if (X.__class__.__name__ == 'DataFrame') or isinstance(X, pd.core.frame.DataFrame):
         X = X.values
-    if type(X) == np.matrixlib.defmatrix.matrix:
+    if isinstance(X, np.matrixlib.defmatrix.matrix):
         warnings.warn("'defmatrix' will be cast to array.")
         X = np.array(X)
-    if type(X) != np.ndarray:
+    if not isinstance(X, np.ndarray):
         raise ValueError("'X' must be a numpy array or pandas data frame.")
     if len(X.shape) == 1:
         X = X.reshape((1, -1))
@@ -266,9 +267,8 @@ def _logistic_grad_norm(X, y, pred, base_algorithm):
     coef = base_algorithm.coef_.reshape(-1)[:X.shape[1]]
     err = pred - y
 
-    if X.__class__.__name__ in ['coo_matrix', 'csr_matrix', 'csc_matrix']:
-        if X.__class__.__name__ != 'csr_matrix':
-            from scipy.sparse import csr_matrix
+    if issparse(X):
+        if not isspmatrix_csr(X):
             warnings.warn("Sparse matrix will be cast to CSR format.")
             X = csr_matrix(X)
         grad_norm = X.multiply(err)
@@ -380,17 +380,6 @@ class _BetaPredictor(_FixedPredictor):
     def predict(self, X):
         return (self.random_state.beta(self.a, self.b, size = X.shape[0])).astype('uint8')
 
-    def predict_avg(self, X):
-        pred = self.decision_function(X)
-        _apply_inverse_sigmoid(pred)
-        return pred
-
-    def predict_rnd(self, X):
-        return self.predict_avg(X)
-
-    def predict_ucb(self, X):
-        return self.predict_avg(X)
-
     def exploit(self, X):
         return np.repeat(self.a / self.b, X.shape[0])
 
@@ -405,15 +394,6 @@ class _ZeroPredictor(_FixedPredictor):
     def predict(self, X):
         return np.zeros(X.shape[0])
 
-    def predict_avg(self, X):
-        return np.repeat(-1e6, X.shape[0])
-
-    def predict_rnd(self, X):
-        return self.predict_avg(X)
-
-    def predict_ucb(self, X):
-        return self.predict_avg(X)
-
 class _OnePredictor(_FixedPredictor):
 
     def predict_proba(self, X):
@@ -424,15 +404,6 @@ class _OnePredictor(_FixedPredictor):
 
     def predict(self, X):
         return np.ones(X.shape[0])
-
-    def predict_avg(self, X):
-        return np.repeat(1e6, X.shape[0])
-
-    def predict_rnd(self, X):
-        return self.predict_avg(X)
-
-    def predict_ucb(self, X):
-        return self.predict_avg(X)
 
 class _RandomPredictor(_FixedPredictor):
     def __init__(self, random_state):
@@ -463,8 +434,7 @@ class _BootstrappedClassifierBase:
         self.random_state = _check_random_state(random_state)
 
     def fit(self, X, y):
-        ### Note: radom number generators are not always thread-safe, so don't parallelize this
-        ix_take_all = self.random_state.randint(X.shape[0], size = (X.shape[0], self.nsamples))
+        ix_take_all = self.random_state.integers(X.shape[0], size = (X.shape[0], self.nsamples))
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._fit_single)(sample, ix_take_all, X, y) \
                     for sample in range(self.nsamples))
@@ -473,25 +443,25 @@ class _BootstrappedClassifierBase:
         ix_take = ix_take_all[:, sample]
         xsample = X[ix_take, :]
         ysample = y[ix_take]
-        nclass = (ysample > 0.).sum()
+        n_pos = (ysample > 0.).sum()
         if not self.partialfit:
-            if nclass == ysample.shape[0]:
+            if n_pos == ysample.shape[0]:
                 self.bs_algos[sample] = _OnePredictor()
                 return None
-            elif nclass == 0:
+            elif n_pos == 0:
                 self.bs_algos[sample] = _ZeroPredictor()
                 return None
             else:
                 self.bs_algos[sample].fit(xsample, ysample)
         else:
-            if (nclass == ysample.shape[0]) or (nclass == 0):
+            if (n_pos == ysample.shape[0]) or (n_pos == 0):
                 self.bs_algos[sample].partial_fit(xsample, ysample, classes=[0,1])
             else:
                 self.bs_algos[sample].fit(xsample, ysample)
 
     def partial_fit(self, X, y, classes=None):
         if self.partial_method == "gamma":
-            w_all = self.random_state.gamma(1, 1, size = (X.shape[0], self.nsamples))
+            w_all = self.random_state.standard_gamma(1, size = (X.shape[0], self.nsamples))
             appear_times = None
             rng = None
         elif self.partial_method == "poisson":
@@ -536,7 +506,7 @@ class _BootstrappedClassifierBase:
         pred[:, sample] = self._get_score(sample, X)
 
     def _score_rnd(self, X):
-        chosen_sample = self.random_state.randint(self.nsamples)
+        chosen_sample = self.random_state.integers(self.nsamples)
         return self._get_score(chosen_sample, X)
 
     def exploit(self, X):
@@ -703,8 +673,8 @@ class _OneVsRest:
             self.rng_arm = [self.random_state] * self.n
         elif prev_ovr is None:
             self.rng_arm = \
-                [np.random.RandomState(
-                        seed=self.random_state.randint(np.iinfo(np.int32).max)) \
+                [_check_random_state(
+                        self.random_state.integers(np.iinfo(np.int32).max) + 1) \
                     for choice in range(self.n)]
         else:
             self.rng_arm = prev_ovr.rng_arm
@@ -760,8 +730,8 @@ class _OneVsRest:
                    buffer_X = None, buffer_y = None):
         self.n += 1
         self.rng_arm.append(self.random_state if (self.random_state == np.random) else \
-                            np.random.RandomState(
-                                seed = self.random_state.randint(np.iinfo(np.int32).max)))
+                            _check_random_state(
+                                self.random_state.integers(np.iinfo(np.int32).max) + 1))
         if self.smooth is not None:
             self.counters = np.c_[self.counters, np.array([n_w_rew + n_wo_rew]).reshape((1, 1)).astype(self.counters.dtype)]
         if self.force_counters or (self.thr > 0 and not self.force_fit):
@@ -865,6 +835,8 @@ class _OneVsRest:
         ## Note: don't filter X here as in many cases it won't end up used
         return yclass, this_choice
 
+    ### TODO: these parallelizations probably shouldn't use sharedmem,
+    ### but they still need to somehow modify the random states
     def decision_function(self, X):
         preds = np.zeros((X.shape[0], self.n))
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
@@ -944,7 +916,7 @@ class _OneVsRest:
         return self.beta_counters[2, choice]
 
     def exploit(self, X):
-        ### only used with bootstrapped, bayesian, and lin-ucb/ts classifiers
+        ### only usable within some policies
         pred = np.empty((X.shape[0], self.n))
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._exploit_single)(choice, pred, X) \
@@ -981,14 +953,14 @@ class _BayesianLogisticRegression:
             pm.glm.linear.GLM(X, y, family = 'binomial')
             if self.method == 'advi':
                 trace = pm.fit(progressbar = False, n = self.niter,
-                               random_seed = self.random_state.randint(
-                                                np.iinfo(np.int32).max
+                               random_seed = self.random_state.integers(
+                                                np.iinfo(np.int32).max + 1
                                             ))
             else:
                 trace = pm.sample(progressbar = False, draws = self.niter, tune = 500,
                                   step = None if self.method == "nuts" else pm.Metropolis(),
-                                  random_seed = self.random_state.randint(
-                                                np.iinfo(np.int32).max
+                                  random_seed = self.random_state.integers(
+                                                np.iinfo(np.int32).max + 1
                                             ))
         if self.method == 'advi':
             self.coefs = [i for i in trace.sample(self.nsamples)]
@@ -1019,7 +991,7 @@ class _BayesianLogisticRegression:
         elif self.mode == 'ucb':
             pred = np.percentile(pred, self.perc, axis=1)
         elif self.mode == 'ts':
-            pred = pred[:, self.random_state.randint(pred.shape[1])]
+            pred = pred[:, self.random_state.integers(pred.shape[1])]
         else:
             raise ValueError(_unexpected_err_msg)
         return pred
@@ -1086,30 +1058,34 @@ class _LogisticUCB_n_TS_single:
     def fit(self, X, y, *args, **kwargs):
         self.model.fit(X, y)
         var = self.model.predict_proba(X)[:,1]
-        var = var * (1 - var)        
-        var = var.reshape((-1,1))
+        var = var * (1 - var)   
         n = X.shape[1]
-        if self.fit_intercept:
-            self.Sigma = np.zeros((n+1, n+1), dtype=np.float64)
-            Xvar = (X * var) if not issparse(X) else X.multiply(var)
-            self.Sigma[:n,:n] = Xvar.T.dot(X)
-            self.Sigma[n,n] = var.sum()
-            if not issparse(X):
-                self.Sigma[n,:n] += Xvar.sum(axis=0)
-            else:
-                self.Sigma[n,:n] += np.array(Xvar.sum(axis=0)).reshape(-1)
-            self.Sigma[:n,n] = self.Sigma[n,:n]
+        self.Sigma = np.zeros((n+self.fit_intercept, n+self.fit_intercept), dtype=ctypes.c_double)
+        X, Xcsr = self._process_X(X)
+        _wrapper_double.update_matrices_noinv(
+            X,
+            np.empty(0, dtype=ctypes.c_double),
+            var,
+            self.Sigma,
+            np.empty(0, dtype=ctypes.c_double),
+            Xcsr = Xcsr,
+            add_bias=self.fit_intercept,
+            overwrite=1
+        )
+        _matrix_inv_symm(self.Sigma, self.lambda_)
+
+    def _process_X(self, X):
+        if X.dtype != ctypes.c_double:
+            X = X.astype(ctypes.c_double)
+        if issparse(X):
+            Xcsr = X
+            X = np.empty((0,0), dtype=ctypes.c_double)
         else:
-            if not issparse(X):
-                self.Sigma = X.T.dot(X * var)
-            else:
-                self.Sigma = X.multiply(var).T.dot(X)
-
-        self.Sigma[np.arange(n), np.arange(n)] += self.lambda_
-        self.Sigma = np.linalg.inv(self.Sigma)
-
+            Xcsr = None
+        return X, Xcsr
 
     def decision_function(self, X, exploit=False):
+        ### Thompson sampling
         if (self.ts) and (not exploit):
             if self.fit_intercept:
                 coef = np.r_[self.model.coef_.reshape(-1), self.model.intercept_]
@@ -1145,16 +1121,11 @@ class _LogisticUCB_n_TS_single:
                     pred[:] += coef[-1]
             return pred
 
+        ### UCB
         pred = self.model.decision_function(X)
         if not exploit:
-            n = X.shape[1]
-            if not issparse(X):
-                se_sq = np.einsum("ij,ij->i", X.dot(self.Sigma[:n,:n]), X)
-            else:
-                se_sq = X.multiply(X.dot(self.Sigma[:n,:n])).sum(axis=1)
-            if self.fit_intercept:
-                se_sq[:] += 2. * X.dot(self.Sigma[n,:n])
-                se_sq[:] += self.Sigma[n,n]
+            X, Xcsr = self._process_X(X)
+            se_sq = _wrapper_double.x_A_x_batch(X, self.Sigma, Xcsr, self.fit_intercept, 1)
             pred[:] += self.conf_coef * np.sqrt(se_sq.reshape(-1))
         return pred
 
