@@ -1,5 +1,5 @@
 cython
-numpy?=1.17
+numpy>=1.17
 scipy
 pandas>=0.25.0
 scikit-learn>=0.22

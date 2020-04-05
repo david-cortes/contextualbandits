@@ -114,7 +114,7 @@ Also included is a linear regression class (`contextualbandits.linreg.LinearRegr
 
 ![image](plots/offpolicy.png "bibtex_offpolicy")
 
-## Serializing (pickling) and copying objects
+## Serializing (pickling) objects
 
 Using `pickle` to serialize objects from this library is likely to fail. Use `dill` instead, which has the same syntax as pickle, e.g.:
 ```python
