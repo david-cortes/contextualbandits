@@ -1014,7 +1014,8 @@ class _LinUCB_n_TS_single:
         self.model = LinearRegression(lambda_=self.lambda_,
                                       fit_intercept=self.fit_intercept,
                                       method=self.method,
-                                      use_float=self.use_float)
+                                      use_float=self.use_float,
+                                      calc_inv=True)
 
     def fit(self, X, y):
         if X.shape[0]:

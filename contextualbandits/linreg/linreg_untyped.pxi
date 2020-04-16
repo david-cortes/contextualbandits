@@ -285,14 +285,14 @@ def fit_model_noinv(
     if not calc_inv:
         XtX_copy = XtX.copy()
         tposv(&lo, &n_plusb, &one_int, &XtX[0,0], &n_plusb, &XtY[0], &n_plusb, &ignore)
-        return XtX_copy, XtY_copy, XtY
-        ## XtX, XtY, coef
+        return XtX_copy, XtX, XtY_copy, XtY
+        ## XtX, invXtX, XtY, coef
 
     else:
         tposv(&lo, &n_plusb, &one_int, &XtX[0,0], &n_plusb, &XtY[0], &n_plusb, &ignore)
         tpotri(&lo, &n_plusb, &XtX[0,0], &n_plusb, &ignore)
-        return XtX, XtY_copy, XtY
-        ## invXtX, XtY, coef
+        return np.empty((0,0), dtype=C_realtp), XtX, XtY_copy, XtY
+        ## dummy, invXtX, XtY, coef
 
 
 def fit_model_inv(

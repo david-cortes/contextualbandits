@@ -43,6 +43,10 @@ class LinearRegression(BaseEstimator):
             a matrix inverse. This is likely to be faster when fitting the model
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
+    calc_inv : bool
+        When using ``method='chol'``, whether to also produce a matrix inverse, which
+        is required for using the LinUCB and LinTS prediction modes. Ignored when
+        passing ``method='sm'`` (the default).
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
@@ -59,10 +63,12 @@ class LinearRegression(BaseEstimator):
         The obtained coefficients. If passing 'fit_intercept=True', the intercept
         will be at the last entry.
     """
-    def __init__(self, lambda_=1., fit_intercept=True, method="chol", use_float=True, copy_X=True):
+    def __init__(self, lambda_=1., fit_intercept=True, method="chol", calc_inv=True,
+                 use_float=True, copy_X=True):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
         self.method = method
+        self.calc_inv = bool(self.calc_inv)
         self._use_float = bool(use_float)
         self.copy_X = bool(copy_X)
 
@@ -185,15 +191,13 @@ class LinearRegression(BaseEstimator):
 
         cy_funs = _wrapper_float if self._use_float else _wrapper_double
         if (self.method == "chol") or (X.shape[0] >= X.shape[1]):
-            self._invXtX, self._XtY, self.coef_ = \
+            self._XtX, self._invXtX, self._XtY, self.coef_ = \
                 cy_funs.fit_model_noinv(
                     X, y, w, Xcsr,
                     add_bias=self.fit_intercept,
                     lam = self.lambda_,
-                    calc_inv=self.method != "chol"
+                    calc_inv=self.calc_inv
                 )
-            if self.method == "chol":
-                self._XtX = self._invXtX.copy()
         else:
             self._invXtX, self._XtY, self.coef_ = \
                 cy_funs.fit_model_inv(
@@ -236,11 +240,14 @@ class LinearRegression(BaseEstimator):
 
         cy_funs = _wrapper_float if self._use_float else _wrapper_double
         if self.method == "chol":
+            if self._invXtX.shape[0] == 0:
+                self._invXtX = np.empty((self._XtX.shape[0], self._XtX.shape[1]),
+                                        dtype=ctypes.c_float if self._use_float else ctypes.c_double)
             cy_funs.update_running_noinv(
                 self._XtX, self._XtY, self._invXtX, self.coef_,
                 X, y, w, Xcsr,
                 add_bias=self.fit_intercept,
-                calc_inv=0
+                calc_inv=self.calc_inv
             )
         else:
             cy_funs.update_running_inv(
@@ -315,6 +322,9 @@ class LinearRegression(BaseEstimator):
             alpha = float(alpha)
         assert isinstance(alpha, float)
 
+        if (self.method == "chol") and (not self.calc_inv):
+            raise ValueError("Not available when using 'method=\"chol\"' and 'calc_inv=False'.")
+
         pred = self.predict(X)
         ci = self._multiply_x_A_x(X)
         pred[:] += alpha * np.sqrt(ci)
@@ -373,6 +383,9 @@ class LinearRegression(BaseEstimator):
         if isinstance(v_sq, int):
             v_sq = float(v_sq)
         assert isinstance(v_sq, float)
+
+        if (self.method == "chol") and (not self.calc_inv):
+            raise ValueError("Not available when using 'method=\"chol\"' and 'calc_inv=False'.")
 
         tol = 1e-20
         if np.linalg.det(self._invXtX) >= tol:
