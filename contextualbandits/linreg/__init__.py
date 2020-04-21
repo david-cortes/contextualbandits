@@ -68,7 +68,7 @@ class LinearRegression(BaseEstimator):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
         self.method = method
-        self.calc_inv = bool(self.calc_inv)
+        self.calc_inv = bool(calc_inv)
         self._use_float = bool(use_float)
         self.copy_X = bool(copy_X)
 
