@@ -40,8 +40,8 @@ Three of the main problematics that arise in contextual bandits are:
 
 This package does not deal with other related topics such as:
 
-* Incorporating social networks and similarity information between observations and/or arms – for some implementations of methods dealing with similarity information see [BanditLib](https://github.com/huazhengwang/BanditLib)
-* Bandits with “expert advise” (e.g. Exp4, OnlineCover)
+* Incorporating social networks and similarity information between observations and/or arms - for some implementations of methods dealing with similarity information see [BanditLib](https://github.com/huazhengwang/BanditLib)
+* Bandits with "expert advise" (e.g. Exp4, OnlineCover)
 * Online clustering (used for defining similarity buckets)
 
 
@@ -68,15 +68,13 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
-* Fixed problems related to Python3 features when running online module in Python 2.7.
-* The online module can now use named arms, as well as add and drop arms from already-initialized objects.
-* The online and off-policy modules can now parallelize computations across arms (also across samples in bootstrapped methods).
-* LinUCB speed has been improved by taking more efficient matrix operation routes and using Cython code.
-* Added a linear regression class which keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once.
-* Added functionality for `refit_buffer` in the batch/streaming train mode (see docs for details).
-* Added option to use base classifier's `warm_start` if available (for faster model fitting).
-* Added a `random_state` parameter to the methods for getting reproducible results.
+* Added option for `ExploreFirst` to make choices using active learning.
 * Updated the online example notebook for better results with both full-refit and streaming-mode versions after the latest additions.
+* Added a `random_state` parameter to the methods for getting reproducible results.
+* Added option to use base classifier's `warm_start` if available (for faster model fitting).
+* Added functionality for `refit_buffer` in the batch/streaming train mode (see docs for details).
+* Added a linear regression class which keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once.
+* LinUCB speed has been improved by taking more efficient matrix operation routes and using Cython code.
 
 
 ## Implemented algorithms
@@ -88,7 +86,7 @@ Online linear models:
 * Linear Thompson Sampling (see [4])
 * Logistic UCB and Thompson sampling (see [1])
 
-Adaptations from multi-armed bandits taking black-box classifiers:
+Adaptations from multi-armed bandits taking arbitrary classifiers:
 * Upper Confidence Bound (see [1], [6] and [3])
 * Thompson Sampling (see [1] and [3])
 * Epsilon Greedy (see [1], [7] and [6])
@@ -97,6 +95,7 @@ Adaptations from multi-armed bandits taking black-box classifiers:
 
 Other:
 * Exploration based on active learning (see [1])
+* SoftMax chooser (see [1]).
 
 Off-policy:
 * Offset Tree (see [8])

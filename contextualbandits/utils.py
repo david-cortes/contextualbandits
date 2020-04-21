@@ -224,6 +224,7 @@ def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
         self._force_fit = False
         self._rand_grad_norms = case_one_class
     self.case_one_class = case_one_class
+    self._force_counters = True
 
 def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
     if (refit_buffer_X is not None) or (refit_buffer_y is not None):

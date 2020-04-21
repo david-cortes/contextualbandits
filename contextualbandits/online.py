@@ -1344,7 +1344,6 @@ class AdaptiveGreedy(_ActivePolicy):
             assert active_choice in ['min', 'max', 'weighted']
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self.active_choice = active_choice
-        self._force_counters = self.active_choice is not None
 
     def predict(self, X, exploit = False):
         """
@@ -1450,7 +1449,7 @@ class AdaptiveGreedy(_ActivePolicy):
                     self.active_choice),
                 axis = 1)
 
-class ExploreFirst(_BasePolicy):
+class ExploreFirst(_ActivePolicy):
     """
     Explore First, a.k.a. Explore-Then-Exploit
     
@@ -1473,6 +1472,38 @@ class ExploreFirst(_BasePolicy):
     explore_rounds : int
         Number of rounds to wait before exploitation mode.
         Will switch after making N predictions.
+    prob_active_choice : float (0, 1)
+        Probability of choosing explore-mode actions according to active
+        learning criteria. Pass zero for choosing everything at random.
+    active_choice : str, one of 'weighted', 'max' or 'min'
+        How to calculate the gradient that an observation would have on the loss
+        function for each classifier, given that it could be either class (positive or negative)
+        for the classifier that predicts each arm. If weighted, they are weighted by the same
+        probability estimates from the base algorithm.
+    f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+        Function that calculates the row-wise norm of the gradient from observations in X if their class were
+        negative (first column) or positive (second column).
+        The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
+        with stochQN's 'StochasticLogisticRegression';
+        and with this package's 'LinearRegression'.
+        Ignored when passing ``prob_active_choice=0.``
+    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
+        If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
+        will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
+        If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
+        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
+        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
+        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
+        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
+        object from NumPy to use for generating random numbers.
+        If passing 'auto', will generate random numbers:
+
+            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
+            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+
+        If passing 'zero', it will output zero whenever models have not been fitted.
+        Ignored when passing ``prob_active_choice=0.``
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -1539,6 +1570,8 @@ class ExploreFirst(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
+                 prob_active_choice=0., active_choice='weighted',
+                 f_grad_norm='auto', case_one_class='auto',
                  beta_prior=None, smoothing=None, batch_train=False,
                  refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
@@ -1550,6 +1583,13 @@ class ExploreFirst(_BasePolicy):
         assert isinstance(explore_rounds, int)
         self.explore_rounds = explore_rounds
         self.explore_cnt = 0
+
+        assert (prob_active_choice >= 0.) and (prob_active_choice <= 1.)
+        self.prob_active_choice = float(prob_active_choice)
+        if self.prob_active_choice > 0:
+            assert active_choice in ['min', 'max', 'weighted']
+            self.active_choice = active_choice
+            _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
 
     def predict(self, X, exploit = False):
         """
@@ -1587,17 +1627,44 @@ class ExploreFirst(_BasePolicy):
             
             # case 1: all predictions are within allowance
             if self.explore_cnt <= self.explore_rounds:
-                return self.random_state.integers(self.nchoices, size = X.shape[0])
+                pred = self.random_state.integers(self.nchoices, size = X.shape[0])
+                self._choose_active(X, pred)
+                return pred
             
             # case 2: some predictions are within allowance, others are not
             else:
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
                 pred = np.empty(X.shape[0], type = np.float64)
                 pred[:n_explore] = self.random_state.integers(self.nchoices, n_explore)
+                self._choose_active(X[:n_explore], pred[:n_explore])
                 pred[n_explore:] = self._oracles.predict(X[n_explore:])
                 return pred
         else:
             return self._oracles.predict(X)
+
+    def _choose_active(self, X, pred):
+        if self.prob_active_choice <= 0.:
+            return None
+
+        pick_active = self.random_state.random(size=X.shape[0]) <= self.prob_active_choice
+        pred[pick_active] = np.argmax(
+                self._crit_active(
+                    X[pick_active],
+                    self._oracles.decision_function(X[pick_active]),
+                    self.active_choice),
+                axis = 1)
+
+    def reset_count(self):
+        """
+        Resets the counter for exploitation mode
+
+        Returns
+        -------
+        self
+
+        """
+        self.explore_cnt = 0
+        return self
 
 class ActiveExplorer(_ActivePolicy):
     """
@@ -1733,10 +1800,9 @@ class ActiveExplorer(_ActivePolicy):
         self.base_algorithm = base_algorithm
         
         assert isinstance(explore_prob, float)
-        assert (explore_prob > 0) and (explore_prob < 1)
+        assert (explore_prob > 0.) and (explore_prob <= 1.)
         self.explore_prob = explore_prob
         self.decay = decay
-        self._force_counters = True
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
         """
