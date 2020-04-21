@@ -2463,7 +2463,7 @@ class ParametricTS(_BasePolicy):
     beta_prior_ts : tuple(float, float)
         Beta prior used for the distribution from which to draw probabilities given
         the base algorithm's estimates. This is independent of ``beta_prior``, and
-        they will not be used together under the same arm.
+        they will not be used together under the same arm. Pass '(0,0)' for no prior.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
@@ -2518,7 +2518,7 @@ class ParametricTS(_BasePolicy):
         otherwise result in slower runs.
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None,
-                 beta_prior_ts=(1.,1.), smoothing=None,
+                 beta_prior_ts=(0.,0.), smoothing=None,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
@@ -2560,8 +2560,8 @@ class ParametricTS(_BasePolicy):
         with_model = counters >= self.beta_prior[1]
         counters = counters.reshape((1,-1))
         pred[:, with_model] = self.random_state.beta(
-            pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0],
-            (1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1]
+            np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-8),
+            np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-8)
             )
 
         chosen = self._name_arms(np.argmax(pred, axis = 1))
