@@ -420,7 +420,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -441,7 +441,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
@@ -453,7 +453,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         See Note.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -544,7 +544,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -565,11 +565,11 @@ class BootstrappedTS(_BasePolicyWithExploit):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     batch_sample_method : str, either 'gamma' or 'poisson'
@@ -577,7 +577,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
         See Note.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -670,12 +670,12 @@ class LogisticUCB(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -776,12 +776,12 @@ class LogisticTS(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -852,7 +852,7 @@ class SeparateClassifiers(_BasePolicy):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -873,16 +873,16 @@ class SeparateClassifiers(_BasePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -1022,7 +1022,7 @@ class EpsilonGreedy(_BasePolicy):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -1043,16 +1043,16 @@ class EpsilonGreedy(_BasePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -1228,7 +1228,7 @@ class AdaptiveGreedy(_ActivePolicy):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -1249,11 +1249,11 @@ class AdaptiveGreedy(_ActivePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     active_choice : None or str in {'min', 'max', 'weighted'}
@@ -1285,7 +1285,7 @@ class AdaptiveGreedy(_ActivePolicy):
         If passing 'zero', it will output zero whenever models have not been fitted.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -1487,7 +1487,7 @@ class ExploreFirst(_BasePolicy):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -1508,16 +1508,16 @@ class ExploreFirst(_BasePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -1668,7 +1668,7 @@ class ActiveExplorer(_ActivePolicy):
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -1689,16 +1689,16 @@ class ActiveExplorer(_ActivePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -1822,7 +1822,7 @@ class SoftmaxExplorer(_BasePolicy):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     batch_train : bool
-        Whether the base algorithm will be fit to the data in batches as it comes (online),
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
         'partial_fit' method.
     refit_buffer : int or None
@@ -1843,16 +1843,16 @@ class SoftmaxExplorer(_BasePolicy):
         reserve for ``refit_buffer``. If passing 'False', when the reserve is
         not yet full, these will only store shallow copies of the data, which
         is faster but will not let Python's garbage collector free memory
-        after deleting the data, and if the orinal data is overwritten, so will
+        after deleting the data, and if the original data is overwritten, so will
         this buffer.
         Ignored when not using ``refit_buffer``.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -2021,12 +2021,12 @@ class LinUCB(_BasePolicyWithExploit):
         stuck in situations in which it will only choose actions from the first batch
         of observations to which it is fit.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -2157,12 +2157,12 @@ class LinTS(LinUCB):
         stuck in situations in which it will only choose actions from the first batch
         of observations to which it is fit.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -2240,12 +2240,12 @@ class BayesianUCB(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
@@ -2327,12 +2327,12 @@ class BayesianTS(_BasePolicyWithExploit):
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of 'beta_prior' or 'smoothing'.
     assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to True,
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
         fit to that observation too, having negative label.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         Passing 'None' will make the resulting object fail to pickle,
