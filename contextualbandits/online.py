@@ -2560,8 +2560,8 @@ class ParametricTS(_BasePolicy):
         with_model = counters >= self.beta_prior[1]
         counters = counters.reshape((1,-1))
         pred[:, with_model] = self.random_state.beta(
-            np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-8),
-            np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-8)
+            np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-8, a_max=None),
+            np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-8, a_max=None)
             )
 
         chosen = self._name_arms(np.argmax(pred, axis = 1))
