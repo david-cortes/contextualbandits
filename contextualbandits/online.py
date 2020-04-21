@@ -2431,3 +2431,142 @@ class BayesianTS(_BasePolicyWithExploit):
                     method = self.method, niter = self.n_iter,
                     nsamples = self.n_samples, mode = 'ts')
         self.batch_train = False
+
+class ParametricTS(_BasePolicy):
+    """
+    Parametric Thompson Sampling
+
+    Performs Thompson sampling using a beta distribution, with parameters given
+    by the predicted probability from the base algorithm multiplied by the number
+    of observations seen from each arm.
+
+    Parameters
+    ----------
+    base_algorithm : obj
+        Base binary classifier for which each sample for each class will be fit.
+        Will look for, in this order:
+            1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
+            2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+        Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((3/nchoices, 4), 2)
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    beta_prior_ts : tuple(float, float)
+        Beta prior used for the distribution from which to draw probabilities given
+        the base algorithm's estimates. This is independent of ``beta_prior``, and
+        they will not be used together under the same arm.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
+        want to define a class that embeds it with some recalibration built-in.
+        Recommended to use only one of 'beta_prior' or 'smoothing'.
+    batch_train : bool
+        Whether the base algorithm will be fit to the data in batches as it comes (streaming),
+        or to the whole dataset each time it is refit. Requires a classifier with a
+        'partial_fit' method.
+    refit_buffer : int or None
+        Number of observations per arm to keep as a reserve for passing to
+        'partial_fit'. If passing it, up until the moment there are at least this
+        number of observations for a given arm, that arm will keep the observations
+        when calling 'fit' and 'partial_fit', and will translate calls to
+        'partial_fit' to calls to 'fit' with the new plus stored observations.
+        After the reserve number is reached, calls to 'partial_fit' will enlarge
+        the data batch with the stored observations, and old stored observations
+        will be gradually replaced with the new ones (at random, not on a FIFO
+        basis). This technique can greatly enchance the performance when fitting
+        the data in batches, but memory consumption can grow quite large.
+        Calls to 'fit' will override this reserve.
+        Ignored when passing 'batch_train=False'.
+    deep_copy_buffer : bool
+        Whether to make deep copies of the data that is stored in the
+        reserve for ``refit_buffer``. If passing 'False', when the reserve is
+        not yet full, these will only store shallow copies of the data, which
+        is faster but will not let Python's garbage collector free memory
+        after deleting the data, and if the original data is overwritten, so will
+        this buffer.
+        Ignored when not using ``refit_buffer``.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    random_state : int, None, RandomState, or Generator
+        Either an integer which will be used as seed for initializing a
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        Passing 'None' will make the resulting object fail to pickle,
+        but alternatives such as dill can still serialize them.
+        While this controls random number generation for this meteheuristic,
+        there can still be other sources of variations upon re-runs, such as
+        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
+        this might result in a slowdown as both compete for available threads, so don't set
+        parallelization in both. The parallelization uses shared memory, thus you will only
+        see a speed up if your base classifier releases the Python GIL, and will
+        otherwise result in slower runs.
+    """
+    def __init__(self, base_algorithm, nchoices, beta_prior=None,
+                 beta_prior_ts=(1.,1.), smoothing=None,
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
+                 assume_unique_reward=False, random_state=None, njobs=-1):
+        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+                                batch_train, refit_buffer, deep_copy_buffer,
+                                assume_unique_reward, random_state)
+        assert beta_prior_ts[0] >= 0.
+        assert beta_prior_ts[1] >= 0.
+        self.beta_prior_ts = beta_prior_ts
+        self.force_counters = True
+
+    def predict(self, X, exploit = False, output_score = False):
+        """
+        Selects actions according to this policy for new data.
+        
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            New observations for which to choose an action according to this policy.
+        exploit : bool
+            Whether to make a prediction according to the policy, or to just choose the
+            arm with the highest expected reward according to current models.
+        output_score : bool
+            Whether to output the score that this method predicted, in case it is desired to use
+            it with this pakckage's offpolicy and evaluation modules.
+            
+        Returns
+        -------
+        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
+            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
+            with the chosen arm and the score that the arm got following this policy with the classifiers used.
+        """
+        if not self.is_fitted:
+            return self._predict_random_if_unfit(X, output_score)
+        if exploit:
+            X = _check_X_input(X)
+            return np.argmax(self._oracles.decision_function(X), axis=1)
+        pred = self.decision_function(X)
+        counters = self._oracles.beta_counters[1] + self._oracles.beta_counters[2]
+        with_model = counters >= self.beta_prior[1]
+        counters = counters.reshape((1,-1))
+        pred[:, with_model] = self.random_state.beta(
+            pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0],
+            (1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1]
+            )
+
+        chosen = self._name_arms(np.argmax(pred, axis = 1))
+        if not output_score:
+            return chosen
+        else:
+            score_max = np.max(pred, axis=1).reshape((-1, 1))
+            return {"choice" : chosen, "score" : score_max}

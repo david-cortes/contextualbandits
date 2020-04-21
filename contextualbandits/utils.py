@@ -654,7 +654,7 @@ class _OneVsRest:
         self.deep_copy = deep_copy
         self.partialfit = bool(partialfit)
         self.force_counters = bool(force_counters)
-        if self.force_counters or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
             ## in case it has beta prior, keeps track of the counters until no longer needed
             self.alpha = alpha
             self.beta = beta
@@ -724,7 +724,7 @@ class _OneVsRest:
         self.n -= 1
         if self.smooth is not None:
             self.counters = self.counters[:, np.arange(self.counters.shape[1]) != drop_ix]
-        if self.force_counters or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
             self.beta_counters = self.beta_counters[:, np.arange(self.beta_counters.shape[1]) != drop_ix]
 
     def _spawn_arm(self, fitted_classifier = None, n_w_rew = 0, n_wo_rew = 0,
@@ -735,7 +735,7 @@ class _OneVsRest:
                                 self.random_state.integers(np.iinfo(np.int32).max) + 1))
         if self.smooth is not None:
             self.counters = np.c_[self.counters, np.array([n_w_rew + n_wo_rew]).reshape((1, 1)).astype(self.counters.dtype)]
-        if self.force_counters or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
             new_beta_col = np.array([0 if (n_w_rew + n_wo_rew) < self.thr else 1, self.alpha + n_w_rew, self.beta + n_wo_rew]).reshape((3, 1)).astype(self.beta_counters.dtype)
             self.beta_counters = np.c_[self.beta_counters, new_beta_col]
         if fitted_classifier is not None:
@@ -750,7 +750,7 @@ class _OneVsRest:
                     raise ValueError("Must provide a classifier when initializing with different classifiers per arm.")
                 self.algos.append( deepcopy(self.base) )
             else:
-                if self.force_counters or (self.thr > 0 and not self.force_fit):
+                if (self.force_counters) or (self.thr > 0 and not self.force_fit):
                     self.algos.append(_BetaPredictor(self.beta_counters[:, -1][1],
                                                      self.beta_counters[:, -1][2],
                                                      self.rng_arm[-1]))
@@ -763,7 +763,7 @@ class _OneVsRest:
                 self.buffer[-1].add_obs(bufferX, buffer_y)
 
     def _update_beta_counters(self, yclass, choice):
-        if (self.beta_counters[0, choice] == 0) or self.force_counters:
+        if (self.beta_counters[0, choice] == 0) or (self.force_counters):
             n_pos = (yclass > 0.).sum()
             self.beta_counters[1, choice] += n_pos
             self.beta_counters[2, choice] += yclass.shape[0] - n_pos
@@ -792,7 +792,7 @@ class _OneVsRest:
         xclass = X[this_choice, :]
         self.algos[choice].fit(xclass, yclass)
 
-        if self.force_counters or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
             self._update_beta_counters(yclass, choice)
 
 
@@ -819,7 +819,7 @@ class _OneVsRest:
                 self.algos[choice].partial_fit(xclass, yclass, classes = [0, 1])
 
         ## update the beta counters if needed
-        if self.force_counters:
+        if (self.force_counters):
             self._update_beta_counters(yclass, choice)
 
     def _filter_arm_data(self, X, a, r, choice):

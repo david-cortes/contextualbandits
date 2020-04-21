@@ -68,6 +68,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
+* Added new online method `ParametricTS`.
 * Added option for `ExploreFirst` to make choices using active learning.
 * Updated the online example notebook for better results with both full-refit and streaming-mode versions after the latest additions.
 * Added a `random_state` parameter to the methods for getting reproducible results.
