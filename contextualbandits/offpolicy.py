@@ -144,6 +144,7 @@ class DoublyRobustEstimator:
         self.smoothing = _check_smoothing(smoothing)
         self.njobs = _check_njobs(njobs)
         self.kwargs_costsens = kwargs_costsens
+        self.is_fitted = False
     
     def fit(self, X, a, r, p):
         """
@@ -201,6 +202,7 @@ class DoublyRobustEstimator:
                                            njobs = self.njobs,
                                            **self.kwargs_costsens)
         self.oracle.fit(X, C)
+        self.is_fitted = True
     
     def predict(self, X):
         """
@@ -216,6 +218,7 @@ class DoublyRobustEstimator:
         pred : array (n_samples,)
             Actions chosen by this technique.
         """
+        assert self.is_fitted
         X = _check_X_input(X)
         return self.oracle.predict(X)
     
@@ -238,6 +241,7 @@ class DoublyRobustEstimator:
         pred : array (n_samples, n_choices)
             Score assigned to each arm for each observation (see Note).
         """
+        assert self.is_fitted
         X = _check_X_input(X)
         return self.oracle.decision_function(X)
     
@@ -291,6 +295,7 @@ class OffsetTree:
         self.pmin = pmin
         self.random_state = _check_random_state(random_state)
         self.njobs = _check_njobs(njobs)
+        self.is_fitted = False
     
     def fit(self, X, a, r, p):
         """
@@ -321,6 +326,7 @@ class OffsetTree:
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._fit)(classif, X, a, r, p, rs) \
                     for classif in range(len(self._oracles)))
+        self.is_fitted = True
 
     def _fit(self, classif, X, a, r, p, rs):
         obs_take = np.in1d(a, self.tree.node_comparisons[classif][0])
@@ -368,18 +374,16 @@ class OffsetTree:
         pred : array (n_samples,)
             Actions chosen by this technique.
         """
+        assert self.is_fitted
         X = _check_X_input(X)
-        pred = np.zeros(X.shape[0])
-        shape_single = list(X.shape)
-        shape_single[0] = 1
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._predict)(pred, i, shape_single, X) \
-                    for i in range(X.shape[0]))
-        return np.array(pred).astype('int64')
+        pred = np.empty(X.shape[0], dtype=int)
+        for i in range(X.shape[0]):
+            pred[i] = self._predict(i, X)
+        return pred
 
-    def _predict(self, pred, i, shape_single, X):
+    def _predict(self, i, X):
         curr_node = 0
-        X_this = X[i].reshape(shape_single)
+        X_this = X[i].reshape((1,-1))
         while True:
             go_right = self._oracles[curr_node].predict(X_this)
             if go_right:
@@ -388,5 +392,4 @@ class OffsetTree:
                 curr_node = self.tree.childs[curr_node][1]
                 
             if curr_node <= 0:
-                pred[i] = -curr_node
-                return None
+                return -curr_node

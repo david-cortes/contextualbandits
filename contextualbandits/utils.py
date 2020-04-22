@@ -6,8 +6,9 @@ import ctypes
 from scipy.stats import norm as norm_dist
 from scipy.sparse import issparse, isspmatrix_csr, csr_matrix
 from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 from .linreg import LinearRegression, _wrapper_double
-from ._cy_utils import _matrix_inv_symm
+from ._cy_utils import _matrix_inv_symm, _create_node_counters
 
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
@@ -350,6 +351,13 @@ def _apply_inverse_sigmoid(x):
         x[:] = np.log(x / (1.0 - x))
     return None
 
+def is_from_module(base):
+    return (isinstance(base, _BootstrappedClassifierBase) or
+            isinstance(base, _LinUCB_n_TS_single) or
+            isinstance(base, _LogisticUCB_n_TS_single) or
+            isinstance(base, _BayesianLogisticRegression) or
+            isinstance(base, _TreeUCB_n_TS_single))
+
 def _apply_softmax(x):
     x[:, :] = np.exp(x - x.max(axis=1).reshape((-1, 1)))
     x[:, :] = x / x.sum(axis=1).reshape((-1, 1))
@@ -642,12 +650,14 @@ class _OneVsRest:
                  partialfit=False, refit_buffer=0, deep_copy=False,
                  force_fit=False, force_counters=False,
                  prev_ovr=None, warm=False,
+                 force_unfit_predict=False,
                  njobs=1):
         self.n = n
         self.smooth = smooth
         self.assume_un = assume_un
         self.njobs = njobs
-        self.force_fit = force_fit
+        self.force_fit = bool(force_fit)
+        self.force_unfit_predict = bool(force_unfit_predict)
         self.thr = thr
         self.random_state = random_state
         self.refit_buffer = refit_buffer
@@ -700,12 +710,11 @@ class _OneVsRest:
                 for choice in range(self.n):
                     if isinstance(self.algos[choice], _FixedPredictor):
                         self.algos[choice] = deepcopy(base)
+                        if is_from_module(base):
+                            self.algos[choice].random_state = self.rng_arm[choice]
             else: 
                 self.algos = [deepcopy(base) for choice in range(self.n)]
-                if isinstance(base, _BootstrappedClassifierBase) \
-                   or isinstance(base, _LinUCB_n_TS_single) \
-                   or isinstance(base, _LogisticUCB_n_TS_single) \
-                   or isinstance(base, _BayesianLogisticRegression):
+                if is_from_module(base):
                     for choice in range(self.n):
                         self.algos[choice].random_state = self.rng_arm[choice]
 
@@ -848,7 +857,8 @@ class _OneVsRest:
 
     def _decision_function_single(self, choice, X, preds, depth=2):
         ## case when using partial_fit and need beta predictions
-        if (self.partialfit or self.force_fit) and (self.thr > 0):
+        if ((self.partialfit or self.force_fit) and
+            (self.thr > 0) and (not self.force_unfit_predict)):
             if self.beta_counters[0, choice] == 0:
                 preds[:, choice] = \
                     self.rng_arm[choice].beta(self.alpha + self.beta_counters[1, choice],
@@ -915,6 +925,9 @@ class _OneVsRest:
 
     def get_n_neg(self, choice):
         return self.beta_counters[2, choice]
+
+    def get_counts(self):
+        return self.beta_counters[1] + self.beta_counters[2]
 
     def exploit(self, X):
         ### only usable within some policies
@@ -1032,7 +1045,8 @@ class _LinUCB_n_TS_single:
         if exploit:
             return self.model.predict(X)
         elif not self.ts:
-            return self.model.predict_ucb(X, self.alpha)
+            return self.model.predict_ucb(X, self.alpha, add_unfit_noise=True,
+                                          random_state=self.random_state)
         else:
             return self.model.predict_thompson(X, self.alpha, self.sample_unique,
                                                self.random_state)
@@ -1056,8 +1070,13 @@ class _LogisticUCB_n_TS_single:
                                         solver='lbfgs', max_iter=15000,
                                         warm_start=True)
         self.Sigma = np.empty((0,0), dtype=np.float64)
+        self.is_fitted = False
 
     def fit(self, X, y, *args, **kwargs):
+        if X.shape[0] == 0:
+            return self
+        elif np.unique(y).shape[0] <= 1:
+            return self
         self.model.fit(X, y)
         var = self.model.predict_proba(X)[:,1]
         var = var * (1 - var)   
@@ -1075,6 +1094,7 @@ class _LogisticUCB_n_TS_single:
             overwrite=1
         )
         _matrix_inv_symm(self.Sigma, self.lambda_)
+        self.is_fitted = True
 
     def _process_X(self, X):
         if X.dtype != ctypes.c_double:
@@ -1124,6 +1144,11 @@ class _LogisticUCB_n_TS_single:
             return pred
 
         ### UCB
+        if not self.is_fitted:
+            pred = self.conf_coef * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+            pred[:] += self.random_state.random(size=pred.shape[0]) / 1e5
+            return pred
+
         pred = self.model.decision_function(X)
         if not exploit:
             X, Xcsr = self._process_X(X)
@@ -1132,4 +1157,76 @@ class _LogisticUCB_n_TS_single:
         return pred
 
     def exploit(self, X):
-        return 1. / (1. + np.exp(-self.model.decision_function(X)))
+        pred = self.model.decision_function(X)
+        _apply_sigmoid(pred)
+        return pred
+
+class _TreeUCB_n_TS_single:
+    def __init__(self, beta_prior=(1,1), ts=False, alpha=0.8, random_state=None,
+                 *args, **kwargs):
+        self.beta_prior = beta_prior
+        self.random_state = random_state
+        self.conf_coef = norm_dist.ppf(alpha)
+        self.ts = bool(ts)
+        self.model = DecisionTreeClassifier(*args, **kwargs)
+        self.is_fitted = False
+        self.aux_beta = (beta_prior[0], beta_prior[1])
+
+    def update_aux(self, y):
+        self.aux_beta[0] += (y >  0.).sum()
+        self.aux_beta[1] += (y <= 0.).sum()
+
+    def fit(self, X, y):
+        if X.shape[0] == 0:
+            return self
+        elif np.unique(y).shape[0] <= 1:
+            self.update_aux(y)
+            return self
+
+        seed = self.random_state.integers(np.iinfo(np.int32).max)
+        self.model.set_params(random_state = seed)
+        self.model.fit(X, y)
+        n_nodes = self.model.tree_.node_count
+        self.pos = np.zeros(n_nodes, dtype=ctypes.c_long)
+        self.neg = np.zeros(n_nodes, dtype=ctypes.c_long)
+        pred_node = self.model.apply(X).astype(ctypes.c_long)
+        _create_node_counters(self.pos, self.neg, pred_node, y.astype(ctypes.c_double))
+        self.pos = self.pos.astype(ctypes.c_double) + self.beta_prior[0]
+        self.neg = self.neg.astype(ctypes.c_double) + self.beta_prior[1]
+
+        self.is_fitted = True
+        return self
+
+    def partial_fit(self, X, y):
+        if X.shape[0] == 0:
+            return self
+        elif not self.is_fitted:
+            self.update_aux(y)
+            return self
+
+        new_pos = np.zeros(n_nodes, dtype=ctypes.c_long)
+        new_neg = np.zeros(n_nodes, dtype=ctypes.c_long)
+        pred_node = self.model.apply(X).astype(ctypes.c_long)
+        _create_node_counters(new_pos, new_neg, pred_node, y.astype(ctypes.c_double))
+        self.pos[:] += new_pos
+        self.neg[:] += new_neg
+        return self
+
+    def predict(self, X):
+        if not self.is_fitted:
+            n = X.shape[0]
+            if self.ts:
+                return self.random_state.beta(self.aux_beta[0], self.aux_beta[1], size=n)
+            else:
+                mean = self.aux_beta[0] / (self.aux_beta[0] + self.aux_beta[1])
+                noise = self.random_state.random(size=n) / 1e6
+                return mean + noise
+
+        pred_node = self.model.apply(X)
+        if self.ts:
+            return self.random_state.beta(self.pos[pred_node], self.neg[pred_node])
+        else:
+            n = self.pos[pred_node] + self.neg[pred_node]
+            mean = self.pos[pred_node] / n
+            ci = np.sqrt(mean * (1. - mean) / n)
+            return mean + self.conf_coef * ci

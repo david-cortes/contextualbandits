@@ -49,6 +49,8 @@ Don't use `pickle` to userialize objects from this package as it's likely to fai
 Online Contextual Bandits
 =================================
 
+Hint: if in doubt of where to start or which method to choose, the safest bet is `BootstrappedUCB`.
+
 .. automodule:: contextualbandits.online
     :members:
     :undoc-members:

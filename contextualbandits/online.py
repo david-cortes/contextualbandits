@@ -11,7 +11,8 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _add_method_predict_robust, _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
-            _LinUCB_n_TS_single, _LogisticUCB_n_TS_single
+            _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
+            _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows
 
 class _BasePolicy:
@@ -20,7 +21,8 @@ class _BasePolicy:
 
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices,
             batch_train, refit_buffer, deep_copy_buffer, assume_unique_reward,
-            random_state, assign_algo=True, prior_def_ucb = False):
+            random_state, assign_algo = True, prior_def_ucb = False,
+            force_unfit_predict = False):
         
         if isinstance(base_algorithm, np.ndarray) or base_algorithm.__class__.__name__ == "Series":
             base_algorithm = list(base_algorithm)
@@ -32,6 +34,7 @@ class _BasePolicy:
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
         self.random_state = _check_random_state(random_state)
+        self.force_unfit_predict = bool(force_unfit_predict)
 
         if assign_algo:
             self.base_algorithm = base_algorithm
@@ -46,7 +49,7 @@ class _BasePolicy:
         self.deep_copy_buffer = bool(deep_copy_buffer)
 
         ### For compatibility with the active policies
-        self._force_fit = False
+        self._force_fit = self.force_unfit_predict
         self._force_counters = False
 
         self.is_fitted = False
@@ -230,6 +233,7 @@ class _BasePolicy:
                                    force_counters = self._force_counters,
                                    prev_ovr = self._oracles if self.is_fitted else None,
                                    warm = use_warm,
+                                   force_unfit_predict = self.force_unfit_predict,
                                    njobs = self.njobs)
         self.is_fitted = True
         return self
@@ -412,13 +416,13 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -456,8 +460,6 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -486,7 +488,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
                  refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, batch_sample_method='gamma',
                  random_state=None, njobs_arms=-1, njobs_samples=1):
-        assert (percentile >= 0) and (percentile <= 100)
+        assert (percentile > 0) and (percentile < 100)
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
                                 nchoices, batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state,
@@ -536,13 +538,13 @@ class BootstrappedTS(_BasePolicyWithExploit):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -580,8 +582,6 @@ class BootstrappedTS(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -654,21 +654,28 @@ class LogisticUCB(_BasePolicyWithExploit):
         Whether to add an intercept term to the models.
     lambda_ : float
         Strenght of the L2 regularization. Must be greater than zero.
+    ucb_from_empty : bool
+        Whether to make upper confidence bounds on arms with no observations according
+        to the formula (ties are broken at random for
+        them). Choosing this option leads to policies that usually start making random
+        predictions until having sampled from all arms, and as such, it's not
+        recommended when the number of arms is large relative to the number of rounds.
+        Instead, it's recommended to use ``beta_prior``, which acts in the same way
+        as for the other policies in this library.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
-        than for other methods.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Note that it will only generate one random number per arm, so the 'a'
+        parameters should be higher than for other methods.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``. Ignored when
+        passing ``ucb_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
-        want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -678,8 +685,6 @@ class LogisticUCB(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -694,11 +699,12 @@ class LogisticUCB(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, percentile=80, fit_intercept=True, lambda_=1.0,
+    def __init__(self, nchoices, percentile=80, fit_intercept=True,
+                 lambda_=1.0, ucb_from_empty=False,
                  beta_prior='auto', smoothing=None,
                  assume_unique_reward=False,
                  random_state=None, njobs=-1):
-        assert (percentile >= 0) and (percentile <= 100)
+        assert (percentile > 0) and (percentile < 100)
         assert lambda_ > 0.
         base = _LogisticUCB_n_TS_single(lambda_=float(lambda_),
                                         fit_intercept=fit_intercept,
@@ -706,7 +712,8 @@ class LogisticUCB(_BasePolicyWithExploit):
                                         ts=False)
         self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
-                                random_state, assign_algo=True, prior_def_ucb=True)
+                                random_state, assign_algo=True, prior_def_ucb=True,
+                                force_unfit_predict = ucb_from_empty)
         self.percentile = percentile
 
 class LogisticTS(_BasePolicyWithExploit):
@@ -768,13 +775,11 @@ class LogisticTS(_BasePolicyWithExploit):
         beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
-        want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -784,8 +789,6 @@ class LogisticTS(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -844,13 +847,13 @@ class SeparateClassifiers(_BasePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -885,8 +888,6 @@ class SeparateClassifiers(_BasePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1014,13 +1015,13 @@ class EpsilonGreedy(_BasePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1055,8 +1056,6 @@ class EpsilonGreedy(_BasePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1220,13 +1219,13 @@ class AdaptiveGreedy(_ActivePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1288,8 +1287,6 @@ class AdaptiveGreedy(_ActivePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1510,13 +1507,13 @@ class ExploreFirst(_ActivePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1551,8 +1548,6 @@ class ExploreFirst(_ActivePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1729,11 +1724,11 @@ class ActiveExplorer(_ActivePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1768,8 +1763,6 @@ class ActiveExplorer(_ActivePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -1880,13 +1873,13 @@ class SoftmaxExplorer(_BasePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1921,8 +1914,6 @@ class SoftmaxExplorer(_BasePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2038,6 +2029,12 @@ class LinUCB(_BasePolicyWithExploit):
     ----
     The 'X' data (covariates) should ideally be centered before passing them
     to 'fit', 'partial_fit', 'predict'.
+
+    Note
+    ----
+    The default hyperparameters here are meant to match the original reference, but
+    it's recommended to change them. Particularly: use ``beta_prior`` instead of
+    ``ucb_from_empty``, decrease ``alpha``, and maybe increase ``lambda_``.
     
     Parameters
     ----------
@@ -2071,21 +2068,31 @@ class LinUCB(_BasePolicyWithExploit):
             a matrix inverse. This is likely to be faster when fitting the model
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
+    ucb_from_empty : bool
+        Whether to make upper confidence bounds on arms with no observations according
+        to the formula, as suggested in the references (ties are broken at random for
+        them). Choosing this option leads to policies that usually start making random
+        predictions until having sampled from all arms, and as such, it's not
+        recommended when the number of arms is large relative to the number of rounds.
+        Instead, it's recommended to use ``beta_prior``, which acts in the same way
+        as for the other policies in this library.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
+        beta_prior = ((5/nchoices, 4), 2).
+        Ignored when passing ``ucb_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
         Note that it is technically incorrect to apply smoothing like this (because
         the predictions from models are not bounded between zero and one), but
         if neither ``beta_prior``, nor ``smoothing`` are passed, the policy can get
         stuck in situations in which it will only choose actions from the first batch
-        of observations to which it is fit.
+        of observations to which it is fit (if using ``ucb_from_empty=False``), or
+        only from the first arms that show rewards (if using ``ucb_from_empty=True``).
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2095,8 +2102,6 @@ class LinUCB(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2114,7 +2119,7 @@ class LinUCB(_BasePolicyWithExploit):
            Proceedings of the 19th international conference on World wide web. ACM, 2010.
     """
     def __init__(self, nchoices, alpha=1.0, lambda_=1.0, fit_intercept=True,
-                 use_float=True, method="sm",
+                 use_float=True, method="sm", ucb_from_empty=True,
                  beta_prior=None, smoothing=None, assume_unique_reward=False,
                  random_state=None, njobs=1):
         self._ts = False
@@ -2125,7 +2130,8 @@ class LinUCB(_BasePolicyWithExploit):
                                    ts=False)
         self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
-                                random_state, assign_algo=True, prior_def_ucb=True)
+                                random_state, assign_algo=True, prior_def_ucb=True,
+                                force_unfit_predict=ucb_from_empty)
 
     def _add_common_lin(self, alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs):
         if isinstance(alpha, int):
@@ -2216,7 +2222,7 @@ class LinTS(LinUCB):
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
         Note that it is technically incorrect to apply smoothing like this (because
         the predictions from models are not bounded between zero and one), but
         if neither ``beta_prior``, nor ``smoothing`` are passed, the policy can get
@@ -2231,8 +2237,6 @@ class LinTS(LinUCB):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2302,9 +2306,7 @@ class BayesianUCB(_BasePolicyWithExploit):
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
-        want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2314,8 +2316,6 @@ class BayesianUCB(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2389,9 +2389,7 @@ class BayesianTS(_BasePolicyWithExploit):
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        This will not work well with non-probabilistic classifiers such as SVM, in which case you might
-        want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2401,8 +2399,6 @@ class BayesianTS(_BasePolicyWithExploit):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2459,7 +2455,7 @@ class ParametricTS(_BasePolicy):
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
         beta_prior = ((3/nchoices, 4), 2)
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     beta_prior_ts : tuple(float, float)
         Beta prior used for the distribution from which to draw probabilities given
         the base algorithm's estimates. This is independent of ``beta_prior``, and
@@ -2469,7 +2465,7 @@ class ParametricTS(_BasePolicy):
         where 'n' is the number of times each arm was chosen in the training data.
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
-        Recommended to use only one of 'beta_prior' or 'smoothing'.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -2504,8 +2500,6 @@ class ParametricTS(_BasePolicy):
         ``Generator`` object for random number generation, a ``RandomState``
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
-        Passing 'None' will make the resulting object fail to pickle,
-        but alternatives such as dill can still serialize them.
         While this controls random number generation for this meteheuristic,
         there can still be other sources of variations upon re-runs, such as
         data aggregations in parallel (e.g. from OpenMP or BLAS functions).
@@ -2556,12 +2550,12 @@ class ParametricTS(_BasePolicy):
             X = _check_X_input(X)
             return np.argmax(self._oracles.decision_function(X), axis=1)
         pred = self.decision_function(X)
-        counters = self._oracles.beta_counters[1] + self._oracles.beta_counters[2]
+        counters = self._oracles.get_counts()
         with_model = counters >= self.beta_prior[1]
         counters = counters.reshape((1,-1))
         pred[:, with_model] = self.random_state.beta(
-            np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-8, a_max=None),
-            np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-8, a_max=None)
+            np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-5, a_max=None),
+            np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-5, a_max=None)
             )
 
         chosen = self._name_arms(np.argmax(pred, axis = 1))
@@ -2570,3 +2564,173 @@ class ParametricTS(_BasePolicy):
         else:
             score_max = np.max(pred, axis=1).reshape((-1, 1))
             return {"choice" : chosen, "score" : score_max}
+
+class PartitionedUCB(_BasePolicyWithExploit):
+    """
+    Tree-partitioned Upper Confidence Bound
+
+    Fits decision trees having non-contextual multi-armed UCB bandits at each leaf.
+    Uses the standard approximation for confidence interval of a proportion
+    (mean + c * sqrt(mean * (1-mean) / n)).
+
+    This is similar to the 'TreeHeuristic' in the reference paper, but uses UCB as a
+    MAB policy instead of Thompson sampling.
+
+    Note
+    ----
+    This method fits only one tree per arm. As such, it's not recommended for
+    high-dimensional data.
+
+    Parameters
+    ----------
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
+    percentile : int [0,100]
+        Percentile of the confidence interval to take.
+    ucb_prior : tuple(float, float)
+        Prior for the upper confidence bounds generated at each tree leaf. First
+        number will be added to the number of positives, and second number to
+        the number of negatives. If passing ``beta_prior=None``, will use these alone
+        to generate an upper confidence bound and will break ties at random.
+    beta_prior : str 'auto', None, or tuple ((a,b), n)
+        If not None, when there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to auto, will be calculated as:
+        beta_prior = ((5/nchoices, 4), 2)
+        Note that it will only generate one random number per arm, so the 'a'
+        parameters should be higher than for other methods.
+        Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        want to define a class that embeds it with some recalibration built-in.
+        Not recommended for this method.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    random_state : int, None, RandomState, or Generator
+        Either an integer which will be used as seed for initializing a
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that it will not achieve a large
+        degree of parallelization due to needing many Python computations with
+        shared memory and no GIL releasing.
+    *args : tuple
+        Additional arguments to pass to the decision tree model (this policy uses
+        SciKit-Learn's ``DecisionTreeClassifier`` - see their docs for more details).
+        Note that passing ``random_state`` for ``DecisionTreeClassifier`` will have
+        no effect as it will be set independently.
+    **kwargs : dict
+        Additional keyword arguments to pass to the decision tree model (this policy uses
+        SciKit-Learn's ``DecisionTreeClassifier`` - see their docs for more details).
+        Note that passing ``random_state`` for ``DecisionTreeClassifier`` will have
+        no effect as it will be set independently.
+    
+    References
+    ----------
+    .. [1] Elmachtoub, Adam N., et al.
+           "A practical method for solving contextual bandit problems using decision trees."
+           arXiv preprint arXiv:1706.04687 (2017).
+    .. [2] https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
+    """
+    def __init__(self, nchoices, percentile=80, ucb_prior=(1,1),
+                 beta_prior='auto', smoothing=None,
+                 assume_unique_reward=False, random_state=None, njobs=-1,
+                 *args, **kwargs):
+        assert (percentile > 0) and (percentile < 100)
+        assert ucb_prior[0] >= 0.
+        assert ucb_prior[1] >= 0.
+        self.ucb_prior = (float(ucb_prior[0]), float(ucb_prior[1]))
+
+        base = _TreeUCB_n_TS_single(self.ucb_prior, ts=False, alpha=float(percentile) / 100.,
+                                    random_state=None, *args, **kwargs)
+        self._add_common_params(base, beta_prior, smoothing, njobs,
+                                nchoices, False, None, False,
+                                assume_unique_reward, random_state,
+                                prior_def_ucb = True,
+                                force_unfit_predict = beta_prior is None)
+        if self.beta_prior[1] <= 0:
+            self.force_unfit_predict = True
+
+class PartitionedTS(_BasePolicyWithExploit):
+    """"
+    Tree-partitioned Thompson Sampling
+
+    Fits decision trees having non-contextual multi-armed Thompson-sampling
+    bandits at each leaf.
+
+    This corresponds to the 'TreeHeuristic' in the reference paper.
+
+    Note
+    ----
+    This method fits only one tree per arm. As such, it's not recommended for
+    high-dimensional data.
+
+    Parameters
+    ----------
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
+    beta_prior : str 'auto', or tuple ((a,b), n)
+        When there are less than 'n' positive samples from a class
+        (actions from that arm that resulted in a reward), it will predict the score
+        for that class as a random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'.
+        Additionally, will use (a,b) as prior when sampling from the MAB at a given node.
+    smoothing : None or tuple (a,b)
+        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
+        where 'n' is the number of times each arm was chosen in the training data.
+        Not recommended for this method.
+    assume_unique_reward : bool
+        Whether to assume that only one arm has a reward per observation. If set to 'True',
+        whenever an arm receives a reward, the classifiers for all other arms will be
+        fit to that observation too, having negative label.
+    random_state : int, None, RandomState, or Generator
+        Either an integer which will be used as seed for initializing a
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+    njobs : int or None
+        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
+        set it to the number of CPU cores. Note that it will not achieve a large
+        degree of parallelization due to needing many Python computations with
+        shared memory and no GIL releasing.
+    *args : tuple
+        Additional arguments to pass to the decision tree model (this policy uses
+        SciKit-Learn's ``DecisionTreeClassifier`` - see their docs for more details).
+        Note that passing ``random_state`` for ``DecisionTreeClassifier`` will have
+        no effect as it will be set independently.
+    **kwargs : dict
+        Additional keyword arguments to pass to the decision tree model (this policy uses
+        SciKit-Learn's ``DecisionTreeClassifier`` - see their docs for more details).
+        Note that passing ``random_state`` for ``DecisionTreeClassifier`` will have
+        no effect as it will be set independently.
+
+    References
+    ----------
+    .. [1] Elmachtoub, Adam N., et al.
+           "A practical method for solving contextual bandit problems using decision trees."
+           arXiv preprint arXiv:1706.04687 (2017).
+    .. [2] https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
+    """
+    def __init__(self, nchoices, beta_prior=((1,1), 1), smoothing=None,
+                 assume_unique_reward=False, random_state=None, njobs=-1,
+                 *args, **kwargs):
+        if beta_prior is None:
+            raise ValueError("Must pass a valid 'beta_prior'.")
+        elif beta_prior == "auto":
+            beta_prior = ((1.,1.), 1)
+        beta_prior = _check_beta_prior(beta_prior, nchoices)
+        base = _TreeUCB_n_TS_single(beta_prior[0], ts=True, random_state=None,
+                                    *args, **kwargs)
+        self._add_common_params(base, beta_prior, smoothing, njobs,
+                                nchoices, False, None, False,
+                                assume_unique_reward, random_state)

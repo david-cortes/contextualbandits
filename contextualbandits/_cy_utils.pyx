@@ -52,3 +52,23 @@ def _matrix_inv_symm(
             ptr_X[i + i*n] += lambda_
         dpotrf(ptr_lo, ptr_n, ptr_X, ptr_n, ptr_ignore)
         dpotri(ptr_lo, ptr_n, ptr_X, ptr_n, ptr_ignore)
+
+def _create_node_counters(
+        np.ndarray[long, ndim=1] cnt_pos,
+        np.ndarray[long, ndim=1] cnt_neg,
+        np.ndarray[long, ndim=1] node_ix,
+        np.ndarray[double, ndim=1] y
+    ):
+    cdef long *ptr_pos = &cnt_pos[0]
+    cdef long *ptr_neg = &cnt_neg[0]
+    cdef long *ptr_ix  = &node_ix[0]
+    cdef double *ptr_y = &y[0]
+
+    cdef long n = node_ix.shape[0]
+    cdef long i
+    with nogil:
+        for i in range(n):
+            if y[i] > 0:
+                cnt_pos[node_ix[i]] += 1
+            else:
+                cnt_neg[node_ix[i]] += 1

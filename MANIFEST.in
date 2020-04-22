@@ -14,3 +14,4 @@ exclude example/*
 exclude build/*
 exclude dist/*
 exclude plots/*
+exclude docs/*

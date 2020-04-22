@@ -286,7 +286,7 @@ class LinearRegression(BaseEstimator):
         cy_funs = _wrapper_float if self._use_float else _wrapper_double
         return cy_funs.x_A_x_batch(X, self._invXtX, Xcsr, self.fit_intercept)
 
-    def predict_ucb(self, X, alpha=1.0):
+    def predict_ucb(self, X, alpha=1.0, add_unfit_noise=False, random_state=None):
         """
         Make an upper-bound prediction on new data
 
@@ -305,6 +305,18 @@ class LinearRegression(BaseEstimator):
             The covariates.
         alpha : float > 0
             The multiplier for the width of the bound.
+        add_unfit_noise : bool
+            When making predictions with an unfit model (in this case they are
+            given by empty zero matrices except for the inverse diagonal matrix
+            based on the regularization parameter), whether to add a very small
+            amount of random noise to it. This is useful in order to break ties
+            at random when using multiple models.
+        random_state : None, np.random.Generator, or np.random.RandomState
+            A NumPy 'Generator' or 'RandomState' object instance to use for generating
+            random numbers. If passing 'None', will use NumPy's random
+            module directly (which can be made reproducible through
+            ``np.random.seed``). Only used when passing ``add_unfit_noise=True``
+            and calling this method on a model that has not been fit to data.
 
         Returns
         -------
@@ -316,7 +328,6 @@ class LinearRegression(BaseEstimator):
         .. [1] Chu, Wei, et al. "Contextual bandits with linear payoff functions."
                Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics. 2011.
         """
-        assert self.is_fitted_
         assert alpha > 0.
         if isinstance(alpha, int):
             alpha = float(alpha)
@@ -324,6 +335,16 @@ class LinearRegression(BaseEstimator):
 
         if (self.method == "chol") and (not self.calc_inv):
             raise ValueError("Not available when using 'method=\"chol\"' and 'calc_inv=False'.")
+
+        if not self.is_fitted_:
+            pred = alpha * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+            if add_unfit_noise:
+                if random_state is None:
+                    noise = np.random.random(size = X.shape[0])
+                else:
+                    noise = random_state.random(size = X.shape[0])
+                pred[:] += noise / 1e5
+            return pred
 
         pred = self.predict(X)
         ci = self._multiply_x_A_x(X)
@@ -360,7 +381,7 @@ class LinearRegression(BaseEstimator):
             can be very slow, using 'False' can provide a reasonable speed up
             without much of a performance penalty.
         random_state : None, np.random.Generator, or np.random.RandomState
-            A NumPy 'RandomState' object instance to use for generating
+            A NumPy 'Generator' or 'RandomState' object instance to use for generating
             random numbers. If passing 'None', will use NumPy's random
             module directly (which can be made reproducible through
             ``np.random.seed``).

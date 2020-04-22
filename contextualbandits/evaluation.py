@@ -340,91 +340,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
     
     return np.array(get_mean_reward(rewards_per_turn, update_freq))
 
-def evaluateDoublyRobustSimplified(est, X, r, p, cmin=1e-8, cmax=1e2):
-    """
-    Doubly-Robust Policy Evaluation (simplified version)
-
-    Evaluates rewards of arm choices of a policy from data collected by another policy,
-    making corrections according to the estimated rewards and to the difference between
-    the estimations of the new and old policy over the actions that were chosen.
-
-    Note
-    ----
-    This implementation is theoretically incorrect as this whole library
-    doesn't follow the paradigm of producing probabilities of choosing actions
-    (it is theoretically possible for many of the methods in the ``online``
-    section, but computationally inefficient and not supported by the library).
-    Instead, it uses estimated expected rewards (that is, the rows of the estimations
-    don't sum to 1), which is not what this method expects, but nevertheless, the
-    ratio of these estimations between the old and new policy should be highly related
-    to the ratio of the probabilities of choosing those actions, and as such, this
-    function is likely to still produce an improvement over a naive average of the
-    expected rewards across actions that were chosen by a different policy.
-
-    Note
-    ----
-    Unlike the other functions in this module, function doesn't take the indices
-    of the chosen actions, but rather takes the predictions directly (see the
-    'Parameters' section for details). Compared to the other doubly-robust evaluation
-    function, this one will not make use of the full outputs from the reward
-    estimator.
-
-    Note
-    ----
-    This implementation mixes the estimated rewards for the actions and the
-    scores from the old policy. Usually these are the same, but in some situations
-    you might dispose of a better reward estimator, in which case you might not
-    want to use this function.
-
-    Note
-    ----
-    The outputs of this function are not guaranteed to be bounded between zero and one.
-
-    Parameters
-    ----------
-    est : array (n_samples,)
-        Scores or reward estimates from the policy being evaluated on the actions
-        that were chosen by the old policy for each row of 'X'.
-    X : array (n_samples, n_features)
-        Matrix of covariates for the available data.
-    r : array (n_samples), {0,1}
-        Rewards that were observed for the chosen actions.
-    p : array (n_samples)
-        Scores or reward estimates from the policy that generated the data for the actions
-        that were chosen by it. Must be in the same scale as 'est'.
-    cmin : float
-        Minimum value for the ratio between estimations to assign to observations.
-        If any ratio is below this number, it will be assigned this value (i.e.
-        will be clipped).
-    cmax : float
-        Maximum value of the ratio between estimations that will be taken.
-        Observations with ratios higher than this will be discarded rather
-        than clipped.
-
-    Returns
-    -------
-    est : float
-        The estimated mean reward that the new policy would obtain on the 'X' data.
-
-    References
-    ----------
-    .. [1] Gilotte, Alexandre, et al.
-           "Offline a/b testing for recommender systems."
-           Proceedings of the Eleventh ACM International Conference on Web Search and Data Mining. 2018.
-    """
-    est = _check_1d_inp(est)
-    p = _check_1d_inp(p)
-    assert est.shape[0] == X.shape[0]
-    assert p.shape[0] == X.shape[0]
-    X, _, r=_check_fit_input(X, np.zeros(p.shape[0]), r)
-
-    w = np.clip(est / p, a_min=cmin, a_max=None)
-    take = w <= cmax
-    if np.sum(take) == 0:
-        raise ValueError("No cases below maximum 'c'.")
-    return np.mean((r[take] - p[take]) * w[take] + est[take])
-
-def evaluateNCIS(est, X, r, p, cmin=1e-8, cmax=1e3):
+def evaluateNCIS(est, r, p, cmin=1e-8, cmax=1e3):
     """
     Normalized Capped Importance Sampling
 
@@ -456,8 +372,6 @@ def evaluateNCIS(est, X, r, p, cmin=1e-8, cmax=1e3):
     est : array (n_samples,)
         Scores or reward estimates from the policy being evaluated on the actions
         that were chosen by the old policy for each row of 'X'.
-    X : array (n_samples, n_features)
-        Matrix of covariates for the available data.
     r : array (n_samples), {0,1}
         Rewards that were observed for the chosen actions.
     p : array (n_samples)
@@ -485,12 +399,12 @@ def evaluateNCIS(est, X, r, p, cmin=1e-8, cmax=1e3):
     """
     est = _check_1d_inp(est)
     p = _check_1d_inp(p)
-    assert est.shape[0] == X.shape[0]
-    assert p.shape[0] == X.shape[0]
-    X, _, r=_check_fit_input(X, np.zeros(p.shape[0]), r)
+    r = _check_1d_inp(r)
+    assert est.shape[0] == p.shape[0]
+    assert est.shape[0] == r.shape[0]
 
     w = np.clip(est / p, a_min=cmin, a_max=None)
     take = w <= cmax
     if np.sum(take) == 0:
         raise ValueError("No cases below maximum 'c'.")
-    return np.einsum("ij,ij->i", w[take], r[take]) / np.sum(w[take])
+    return np.dot(w[take], r[take]) / np.sum(w[take])

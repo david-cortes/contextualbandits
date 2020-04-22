@@ -3,7 +3,7 @@
 
 This Python package contains implementations of methods from different papers dealing with contextual bandit problems, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
-For details about the implementations, or if you would like to cite this in your work, see [Adapting multi-armed bandits policies to contextual bandits scenarios](https://arxiv.org/abs/1811.04383).
+For details about the implementations, or if you would like to cite this in your work, see ["Adapting multi-armed bandits policies to contextual bandits scenarios"](https://arxiv.org/abs/1811.04383).
 
 
 ## Installation
@@ -68,6 +68,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
+* Added tree-based partitioned UCB and TS.
 * Added new online method `ParametricTS`.
 * Added option for `ExploreFirst` to make choices using active learning.
 * Updated the online example notebook for better results with both full-refit and streaming-mode versions after the latest additions.
@@ -97,6 +98,7 @@ Adaptations from multi-armed bandits taking arbitrary classifiers:
 Other:
 * Exploration based on active learning (see [1])
 * SoftMax chooser (see [1]).
+* Tree-based MAB partitioners (see [14]).
 
 Off-policy:
 * Offset Tree (see [8])
@@ -105,6 +107,7 @@ Off-policy:
 Evaluation:
 * Rejection Sampling (see [2])
 * Doubly-Robust Policy Evaluation (see [9])
+* NCIS (see [13])
 
 Most of the methods here can work with streaming data by fitting them to the data in batches if the base classifier has a `partial_fit` method. They otherwise require to be refit to all the historic data every time they are updated. In batch training mode, methods based on bootstrapping approximate resamples either through setting random weights or through including each observation a number of times ~ Poisson(1) (see documentation for details).
 
@@ -160,3 +163,7 @@ Be aware that this is a research-oriented package, and is meant to provide flexi
 * [11] Chu, W., Li, L., Reyzin, L., & Schapire, R. (2011, June). Contextual bandits with linear payoff functions. In Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics (pp. 208-214).
 
 * [12] Kuhn, M., & Johnson, K. (2013). Applied predictive modeling (Vol. 26). New York: Springer.
+
+* [13] Gilotte, A., Calauzènes, C., Nedelec, T., Abraham, A., & Dollé, S. (2018, February). Offline a/b testing for recommender systems. In Proceedings of the Eleventh ACM International Conference on Web Search and Data Mining (pp. 198-206).
+
+* [14] Elmachtoub, A. N., McNellis, R., Oh, S., & Petrik, M. (2017). A practical method for solving contextual bandit problems using decision trees. arXiv preprint arXiv:1706.04687.
