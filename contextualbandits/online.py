@@ -2153,7 +2153,7 @@ class LinUCB(_BasePolicyWithExploit):
 
 class LinTS(LinUCB):
     """
-    LinUCB
+    Linear Thompson Sampling
 
     Note
     ----
@@ -2660,7 +2660,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
             self.force_unfit_predict = True
 
 class PartitionedTS(_BasePolicyWithExploit):
-    """"
+    """
     Tree-partitioned Thompson Sampling
 
     Fits decision trees having non-contextual multi-armed Thompson-sampling
