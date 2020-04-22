@@ -34,8 +34,8 @@ While, in general, algorithms for the contextual bandits problem assume continuo
 
 Three of the main problematics that arise in contextual bandits are:
 
-* Building a policy or strategy for making choices in an online setting that would manage exploration of new arms under different features, or exploitation of arms that are known to be good for some features – covered in `contextualbandits.online`.
-* Building a policy/algorithm with data collected from a different policy, covered in `contextualbandits.offpolicy`.
+* Building a policy or strategy for making choices in an online setting that would manage exploration of new arms under different features, or exploitation of arms that are known to be good for some features - covered in `contextualbandits.online`.
+* Building a policy/algorithm with data collected from a different policy, covered in `contextualbandits.offpolicy` (a.k.a. counter-factual risk minimization).
 * Evaluating the performance of different strategies/policies/algorithms based on partially-labeled data, covered in `contextualbandits.evaluation`.
 
 This package does not deal with other related topics such as:
@@ -133,6 +133,8 @@ m = dill.load(open("saved_ucb_model.dill", "rb"))
 ## Some comments
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
+
+If in doubt of where to start or which method to choose, `BootstrappedUCB` is the safest bet for online methods, and `OffsetTree` is the safest bet for off-policy methods.
 
 Many of this package's methods assume that the binary classification algorithms used have probabilistic outputs (e.g. `DoublyRobustEstimator`), ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation (otherwise will assume the outputs from `predict` are bounded between zero and one). Under some of the online algorithms (e.g. `SoftmaxExplorer`, `AdaptiveGreedy`) or if using smoothing, this will not work very well with e.g. SVM, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
