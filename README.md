@@ -3,7 +3,7 @@
 
 This Python package contains implementations of methods from different papers dealing with contextual bandit problems, as well as adaptations from typical multi-armed bandits strategies. It aims to provide an easy way to prototype and compare ideas, to reproduce research papers that don't provide easily-available implementations of their proposed algorithms, and to serve as a guide in learning about contextual bandits.
 
-For details about the implementations, or if you would like to cite this in your work, see ["Adapting multi-armed bandits policies to contextual bandits scenarios"](https://arxiv.org/abs/1811.04383).
+For details about the implementations, or if you would like to cite this in your research, see ["Adapting multi-armed bandits policies to contextual bandits scenarios"](https://arxiv.org/abs/1811.04383).
 
 
 ## Installation
@@ -42,7 +42,7 @@ This package does not deal with other related topics such as:
 
 * Incorporating social networks and similarity information between observations and/or arms - for some implementations of methods dealing with similarity information see [BanditLib](https://github.com/huazhengwang/BanditLib)
 * Bandits with "expert advise" (e.g. Exp4, OnlineCover)
-* Online clustering (used for defining similarity buckets)
+* Streaming clustering (used for defining similarity buckets)
 
 
 For more information, see the user guides below.
@@ -134,7 +134,7 @@ m = dill.load(open("saved_ucb_model.dill", "rb"))
 
 Many of the algorithms here oftentimes don't manage to beat simpler benchmarks (e.g. Offset Tree vs. a naïve One-Vs-Rest using only subsets of the data for each classifier), and I wouldn't recommend relying on them. They are nevertheless provided for comparison purposes.
 
-If in doubt of where to start or which method to choose, `BootstrappedUCB` is the safest bet for online methods, and `OffsetTree` is the safest bet for off-policy methods.
+If in doubt of where to start or which method to choose, `BootstrappedUCB` is the safest bet for online methods, and `OffsetTree` is the safest bet for off-policy methods, when considering using methods without tuning any hyperparameters.
 
 Many of this package's methods assume that the binary classification algorithms used have probabilistic outputs (e.g. `DoublyRobustEstimator`), ideally with a `predict_proba` method, or with a `decision_function` method to which it will apply a sigmoid transformation (otherwise will assume the outputs from `predict` are bounded between zero and one). Under some of the online algorithms (e.g. `SoftmaxExplorer`, `AdaptiveGreedy`) or if using smoothing, this will not work very well with e.g. SVM, in which case you'll need to programmatically define a new class that performs a recalibration within its `fit` method, and outputs the calibrated numbers through its `predict_proba` (see reference [12]).
 
