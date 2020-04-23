@@ -1025,6 +1025,7 @@ class _LinUCB_n_TS_single:
         self.ts = ts
         self.sample_unique = bool(sample_unique)
         self.random_state = _check_random_state(random_state)
+        self.is_fitted = False
         self.model = LinearRegression(lambda_=self.lambda_,
                                       fit_intercept=self.fit_intercept,
                                       method=self.method,
@@ -1034,11 +1035,13 @@ class _LinUCB_n_TS_single:
     def fit(self, X, y):
         if X.shape[0]:
             self.model.fit(X, y)
+            self.is_fitted = True
         return self
 
     def partial_fit(self, X, y, *args, **kwargs):
         if X.shape[0]:
             self.model.partial_fit(X, y)
+            self.is_fitted = True
         return self
 
     def predict(self, X, exploit=False):
@@ -1052,6 +1055,8 @@ class _LinUCB_n_TS_single:
                                                self.random_state)
 
     def exploit(self, X):
+        if not self.is_fitted:
+            return 0.
         return self.predict(X, exploit = True)
 
 class _LogisticUCB_n_TS_single:
@@ -1065,12 +1070,12 @@ class _LogisticUCB_n_TS_single:
         self.warm_start = True
         self.sample_unique = bool(sample_unique)
         self.random_state = _check_random_state(random_state)
+        self.is_fitted = False
         self.model = LogisticRegression(C=1./lambda_, penalty="l2",
                                         fit_intercept=fit_intercept,
                                         solver='lbfgs', max_iter=15000,
                                         warm_start=True)
         self.Sigma = np.empty((0,0), dtype=np.float64)
-        self.is_fitted = False
 
     def fit(self, X, y, *args, **kwargs):
         if X.shape[0] == 0:
@@ -1157,6 +1162,8 @@ class _LogisticUCB_n_TS_single:
         return pred
 
     def exploit(self, X):
+        if not self.is_fitted:
+            return 0.
         pred = self.model.decision_function(X)
         _apply_sigmoid(pred)
         return pred
@@ -1212,9 +1219,11 @@ class _TreeUCB_n_TS_single:
         self.neg[:] += new_neg
         return self
 
-    def predict(self, X):
+    def predict(self, X, exploit = False):
         if not self.is_fitted:
             n = X.shape[0]
+            if exploit:
+                return self.aux_beta[0] / (self.aux_beta[0] + self.aux_beta[1])
             if self.ts:
                 return self.random_state.beta(self.aux_beta[0], self.aux_beta[1], size=n)
             else:
@@ -1223,6 +1232,8 @@ class _TreeUCB_n_TS_single:
                 return mean + noise
 
         pred_node = self.model.apply(X)
+        if exploit:
+            return self.pos[pred_node] / (self.pos[pred_node] + self.neg[pred_node])
         if self.ts:
             return self.random_state.beta(self.pos[pred_node], self.neg[pred_node])
         else:
@@ -1230,3 +1241,6 @@ class _TreeUCB_n_TS_single:
             mean = self.pos[pred_node] / n
             ci = np.sqrt(mean * (1. - mean) / n)
             return mean + self.conf_coef * ci
+
+    def exploit(self, X):
+        return self.predict(X, exploit = True)
