@@ -433,13 +433,16 @@ class _RandomPredictor(_FixedPredictor):
 
 class _BootstrappedClassifierBase:
     def __init__(self, base, nsamples, percentile = 80, partialfit = False,
-                 partial_method = "gamma", random_state = 1, njobs = 1):
+                 partial_method = "gamma", ts_byrow = False, ts_weighted = False,
+                 random_state = 1, njobs = 1):
         self.bs_algos = [deepcopy(base) for n in range(nsamples)]
         self.partialfit = partialfit
         self.partial_method = partial_method
         self.nsamples = nsamples
         self.percentile = percentile
         self.njobs = njobs
+        self.ts_byrow = bool(ts_byrow)
+        self.ts_weighted = bool(ts_weighted)
         self.random_state = _check_random_state(random_state)
 
     def fit(self, X, y):
@@ -495,28 +498,39 @@ class _BootstrappedClassifierBase:
         else:
             raise ValueError(_unexpected_err_msg)
 
-    def _score_max(self, X):
+    def _pred_by_sample(self, X):
         pred = np.empty((X.shape[0], self.nsamples))
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._assign_score)(sample, pred, X) \
                     for sample in range(self.nsamples))
+        return pred
+
+    def _score_max(self, X):
+        pred = self._pred_by_sample(X)
         return np.percentile(pred, self.percentile, axis=1)
 
     def _score_avg(self, X):
         ### Note: don't try to make it more memory efficient by summing to a single array,
         ### as otherwise it won't be multithreaded.
-        pred = np.empty((X.shape[0], self.nsamples))
-        Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
-                (delayed(self._assign_score)(sample, pred, X) \
-                    for sample in range(self.nsamples))
+        pred = self._pred_by_sample(X)
         return pred.mean(axis = 1)
 
     def _assign_score(self, sample, pred, X):
         pred[:, sample] = self._get_score(sample, X)
 
     def _score_rnd(self, X):
-        chosen_sample = self.random_state.integers(self.nsamples)
-        return self._get_score(chosen_sample, X)
+        if not self.ts_byrow:
+            chosen_sample = self.random_state.integers(self.nsamples)
+            return self._get_score(chosen_sample, X)
+        else:
+            pred = self._pred_by_sample(X)
+            if not self.ts_weighted:
+                return pred[np.arange(X.shape[0]),
+                            self.random_state.integers(self.nsamples, size=X.shape[0])]
+            else:
+                w = self.random_state.random(size = (X.shape[0], self.nsamples))
+                w[:] /= w.sum(axis=0, keepdims=True)
+                return np.einsum("ij,ij->i", w, pred)
 
     def exploit(self, X):
         return self._score_avg(X)
@@ -1056,17 +1070,18 @@ class _LinUCB_n_TS_single:
 
     def exploit(self, X):
         if not self.is_fitted:
-            return 0.
+            return np.zeros(X.shape[0])
         return self.predict(X, exploit = True)
 
 class _LogisticUCB_n_TS_single:
     def __init__(self, lambda_=1., fit_intercept=True, alpha=0.95,
-                 m=1.0, ts=False, sample_unique=False, random_state=1):
+                 m=1.0, ts=False, ts_from_ci=True, sample_unique=False, random_state=1):
         self.conf_coef = norm_dist.ppf(alpha)
         self.m = m
         self.fit_intercept = fit_intercept
         self.lambda_ = lambda_
         self.ts = ts
+        self.ts_from_ci = ts_from_ci
         self.warm_start = True
         self.sample_unique = bool(sample_unique)
         self.random_state = _check_random_state(random_state)
@@ -1111,8 +1126,24 @@ class _LogisticUCB_n_TS_single:
             Xcsr = None
         return X, Xcsr
 
-    def decision_function(self, X, exploit=False):
-        ### Thompson sampling
+    def predict(self, X, exploit=False):
+        ## TODO: refactor this, merge code from ucb and ts_from_ci
+        if (exploit) and (not self.is_fitted):
+            return np.zeros(X.shape[0])
+
+        ### Thompson sampling, from CI
+        if (self.ts) and (self.ts_from_ci) and (not exploit):
+            if not self.is_fitted:
+                ci = np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+                return self.random_state.normal(size=X.shape[0]) * ci
+            pred = self.model.decision_function(X)
+            X, Xcsr = self._process_X(X)
+            se_sq = _wrapper_double.x_A_x_batch(X, self.Sigma, Xcsr, self.fit_intercept, 1)
+            pred[:] += self.random_state.normal(size=X.shape[0]) * np.sqrt(se_sq.reshape(-1))
+            _apply_sigmoid(pred)
+            return pred
+
+        ### Thompson sampling, from coefficients
         if (self.ts) and (not exploit):
             if self.fit_intercept:
                 coef = np.r_[self.model.coef_.reshape(-1), self.model.intercept_]
@@ -1146,12 +1177,14 @@ class _LogisticUCB_n_TS_single:
                 pred = X.dot(coef[:X.shape[1]])
                 if self.fit_intercept:
                     pred[:] += coef[-1]
+            _apply_sigmoid(pred)
             return pred
 
         ### UCB
         if not self.is_fitted:
             pred = self.conf_coef * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
-            pred[:] += self.random_state.random(size=pred.shape[0]) / 1e5
+            pred[:] += self.random_state.random(size=pred.shape[0]) / 1e12
+            _apply_sigmoid(pred)
             return pred
 
         pred = self.model.decision_function(X)
@@ -1159,11 +1192,12 @@ class _LogisticUCB_n_TS_single:
             X, Xcsr = self._process_X(X)
             se_sq = _wrapper_double.x_A_x_batch(X, self.Sigma, Xcsr, self.fit_intercept, 1)
             pred[:] += self.conf_coef * np.sqrt(se_sq.reshape(-1))
+        _apply_sigmoid(pred)
         return pred
 
     def exploit(self, X):
         if not self.is_fitted:
-            return 0.
+            return np.zeros(X.shape[0])
         pred = self.model.decision_function(X)
         _apply_sigmoid(pred)
         return pred
@@ -1228,7 +1262,7 @@ class _TreeUCB_n_TS_single:
                 return self.random_state.beta(self.aux_beta[0], self.aux_beta[1], size=n)
             else:
                 mean = self.aux_beta[0] / (self.aux_beta[0] + self.aux_beta[1])
-                noise = self.random_state.random(size=n) / 1e6
+                noise = self.random_state.random(size=n) / 1e12
                 return mean + noise
 
         pred_node = self.model.apply(X)

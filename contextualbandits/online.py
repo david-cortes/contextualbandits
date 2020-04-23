@@ -308,10 +308,12 @@ class _BasePolicy:
 
 
 class _BasePolicyWithExploit(_BasePolicy):
-    def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method, nsamples, njobs_samples, percentile):
+    def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method,
+                                 nsamples, njobs_samples, percentile,
+                                 ts_byrow = False, ts_weighted = False):
         assert (batch_sample_method == 'gamma') or (batch_sample_method == 'poisson')
         assert isinstance(nsamples, int)
-        assert nsamples >= 2
+        assert nsamples >= 1
         self.batch_sample_method = batch_sample_method
         self.nsamples = nsamples
         self.njobs_samples = _check_njobs(njobs_samples)
@@ -319,22 +321,28 @@ class _BasePolicyWithExploit(_BasePolicy):
             self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
-                random_state = 1,
-                njobs = self.njobs_samples
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
                 )
         elif "decision_function" in dir(base_algorithm):
             self.base_algorithm = _BootstrappedClassifier_w_decision_function(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
-                random_state = 1,
-                njobs = self.njobs_samples
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
                 )
         else:
             self.base_algorithm = _BootstrappedClassifier_w_predict(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
-                random_state = 1,
-                njobs = self.njobs_samples
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
                 )
 
     def _exploit(self, X):
@@ -401,7 +409,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     nsamples : int
@@ -489,6 +497,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
                  assume_unique_reward=False, batch_sample_method='gamma',
                  random_state=None, njobs_arms=-1, njobs_samples=1):
         assert (percentile > 0) and (percentile < 100)
+        assert nsamples >= 2
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
                                 nchoices, batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state,
@@ -513,9 +522,8 @@ class BootstrappedTS(_BasePolicyWithExploit):
 
     Note
     ----
-    Unlike the other Thompson sampling classes, this class, due to using bootstrapped
-    samples, does not offer the option 'sample_unique' - it's equivalent to
-    always having `False` for that parameter in the other methods.
+    If you plan to make only one call to 'predict' between calls to 'fit' and have
+    ``sample_unique=False``, you can pass ``nsamples=1`` without losing any precision.
     
     Parameters
     ----------
@@ -527,7 +535,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     nsamples : int
@@ -545,6 +553,18 @@ class BootstrappedTS(_BasePolicyWithExploit):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    sample_unique : bool
+        Whether to use a different bootstrapped classifier per row at each arm when
+        calling 'predict'. If passing 'False', will take the same bootstrapped
+        classifier within an arm for all the rows passed in a single call to 'predict'.
+        Passing 'False' is a faster alternative, but the theoretically correct way
+        is using a different one per row.
+        Forced to 'True' when passing ``sample_weighted=True``.
+    sample_weighted : bool
+        Whether to take a weighted average from the predictions from each bootstrapped
+        classifier at a given arm, with random weights. This will make the predictions
+        more variable (i.e. more randomness in exploration). The alternative (and
+        default) is to take a prediction from a single classifier each time.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -609,13 +629,18 @@ class BootstrappedTS(_BasePolicyWithExploit):
            Advances in neural information processing systems. 2011.
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
+                 sample_unique = True, sample_weighted = False,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, batch_sample_method='gamma',
                  random_state=None, njobs_arms=-1, njobs_samples=1):
+        if sample_weighted:
+            sample_unique = True
         self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
                                 nchoices, batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state, assign_algo=False)
-        self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, None)
+        self._add_bootstrapped_inputs(base_algorithm, batch_sample_method,
+                                      nsamples, njobs_samples, None,
+                                      ts_byrow = sample_unique, ts_weighted = sample_weighted)
 
 class LogisticUCB(_BasePolicyWithExploit):
     """
@@ -645,7 +670,7 @@ class LogisticUCB(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     percentile : int [0,100]
@@ -721,7 +746,8 @@ class LogisticTS(_BasePolicyWithExploit):
     Logistic Regression with Thompson Sampling
 
     Logistic regression classifier which samples its coefficients using
-    the the variance-covariance matrix of the predictors.
+    the variance-covariance matrix of the predictors, or which samples
+    predicted values from a confidence interval as a faster alternative.
 
     Note
     ----
@@ -749,11 +775,21 @@ class LogisticTS(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
+    sample_from : str, one of "coef", "ci"
+        Whether to make predictions by sampling the model coefficients or by
+        sampling the predicted value from a confidence interval around the best-fit
+        coefficients.
+    ci_from_empty : bool
+        Whether to construct a confidence interval on arms with no observations
+        according to a variance-covariance matrix given by the regulatization
+        parameter alone.
+        Ignored when passing ``sample_from='coef'``.
     multiplier : float
         Multiplier for the covariance matrix. Pass 1 to take it as-is.
+        Ignored when passing ``sample_from='ci'``.
     fit_intercept : bool
         Whether to add an intercept term to the models.
     lambda_ : float
@@ -767,6 +803,7 @@ class LogisticTS(_BasePolicyWithExploit):
         approach which is theoretically wrong, but as sampling coefficients
         can be very slow, using 'False' can provide a reasonable speed up
         without much of a performance penalty.
+        Ignored when passing ``sample_from='ci'``.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
@@ -775,11 +812,12 @@ class LogisticTS(_BasePolicyWithExploit):
         beta_prior = ((5/nchoices, 4), 2)
         Note that it will only generate one random number per arm, so the 'a' parameters should be higher
         than for other methods.
-        Recommended to use only one of ``beta_prior`` or ``smoothing``.
+        Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
+        Ignored when passing ``ci_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of ``beta_prior`` or ``smoothing``.
+        Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -803,11 +841,13 @@ class LogisticTS(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, multiplier=1.0, fit_intercept=True,
-                 lambda_=1.0, sample_unique = False,
+    def __init__(self, nchoices, sample_from="ci", ci_from_empty=False, multiplier=1.0,
+                 fit_intercept=True, lambda_=1.0, sample_unique=False,
                  beta_prior='auto', smoothing=None,
                  assume_unique_reward=False, random_state=None, njobs=-1):
         warnings.warn("This class is experimental. Not recommended to rely on it.")
+        assert sample_from in ["ci", "coef"]
+        self.sample_from = sample_from
         assert lambda_ > 0.
         assert multiplier > 0.
         base = _LogisticUCB_n_TS_single(lambda_=lambda_,
@@ -815,10 +855,12 @@ class LogisticTS(_BasePolicyWithExploit):
                                         alpha=0.,
                                         m=multiplier,
                                         ts=True,
+                                        ts_from_ci = (sample_from == "ci"),
                                         sample_unique=sample_unique)
         self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
-                                random_state, assign_algo=True, prior_def_ucb=False)
+                                random_state, assign_algo=True, prior_def_ucb=False,
+                                force_unfit_predict=ci_from_empty and sample_from == "ci")
 
 class SeparateClassifiers(_BasePolicy):
     """
@@ -838,7 +880,7 @@ class SeparateClassifiers(_BasePolicy):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
@@ -1001,7 +1043,7 @@ class EpsilonGreedy(_BasePolicy):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     explore_prob : float (0,1)
@@ -1463,7 +1505,7 @@ class ExploreFirst(_ActivePolicy):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     explore_rounds : int
@@ -1710,7 +1752,7 @@ class ActiveExplorer(_ActivePolicy):
 
         If passing 'zero', it will output zero whenever models have not been fitted.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     explore_prob : float (0,1)
@@ -1858,7 +1900,7 @@ class SoftmaxExplorer(_BasePolicy):
             3) A 'predict' method outputting (n_samples,), values in [0,1], to which it will apply an inverse sigmoid function.
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     multiplier : float or None
@@ -2039,7 +2081,7 @@ class LinUCB(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     alpha : float
@@ -2175,7 +2217,7 @@ class LinTS(LinUCB):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     v_sq : float
@@ -2281,7 +2323,7 @@ class BayesianUCB(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     percentile : int [0,100]
@@ -2368,7 +2410,7 @@ class BayesianTS(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     method : str, either 'advi', 'nuts', or 'metropolis'
@@ -2446,7 +2488,7 @@ class ParametricTS(_BasePolicy):
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
@@ -2584,7 +2626,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     percentile : int [0,100]
@@ -2676,7 +2718,7 @@ class PartitionedTS(_BasePolicyWithExploit):
     Parameters
     ----------
     nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array or series with arm names, in which case
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', or tuple ((a,b), n)
