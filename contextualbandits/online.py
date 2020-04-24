@@ -1190,6 +1190,26 @@ class EpsilonGreedy(_BasePolicy):
                 warnings.warn("Warning: 'EpsilonGreedy' has a very high decay rate.")
         self.explore_prob = explore_prob
         self.decay = decay
+
+    def reset_epsilon(self, explore_prob=0.2):
+        """
+        Set the exploration probability to a custom number
+
+        Parameters
+        ----------
+        explore_prob : float between 0 and 1
+            The exploration probability to set. Note that it will still
+            apply the decay after resetting it.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert explore_prob >= 0.
+        assert explore_prob <= 1.
+        self.explore_prob = explore_prob
+        return self
     
     def predict(self, X, exploit = False, output_score = False):
         """
@@ -1458,6 +1478,53 @@ class AdaptiveGreedy(_ActivePolicy):
             assert active_choice in ['min', 'max', 'weighted']
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self.active_choice = active_choice
+
+    def reset_threshold(self, threshold="auto"):
+        """
+        Set the adaptive threshold to a custom number
+
+        Parameters
+        ----------
+        threshold : float or "auto"
+            New threshold to use. If passing "auto", will set it
+            to 1.5/nchoices. Note that this threshold will still be
+            decayed if the object was initialized with ``decay_type="threshold"`,
+            and will still be updated if initialized with ``percentile != None``.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        if isinstance(threshold, int):
+            threshold = float(threshold)
+        elif threshold == "auto":
+            threshold = 1.5 / self.nchoices
+        assert isinstance(threshold, float)
+        self.thr = threshold
+        return self
+
+    def reset_percentile(self, percentile=30):
+        """
+        Set the moving percentile to a custom number
+
+        Parameters
+        ----------
+        percentile : int between 0 and 100
+            The new percentile to set. Note that it will still apply
+            decay to it after being set through this method.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        if self.decay_type == 'threshold':
+            raise ValueError("Method is not available when not using percentile decay.")
+        assert percentile >= 0
+        assert percentile <= 100
+        self.percentile = percentile
+        return self
 
     def predict(self, X, exploit = False):
         """
@@ -1936,6 +2003,26 @@ class ActiveExplorer(_ActivePolicy):
         assert (explore_prob > 0.) and (explore_prob <= 1.)
         self.explore_prob = explore_prob
         self.decay = decay
+
+    def reset_explore_prob(self, explore_prob=0.2):
+        """
+        Set the active exploration probability to a custom number
+
+        Parameters
+        ----------
+        explore_prob : float between 0 and 1
+            The new exploration probability. Note that it will still apply
+            decay on it after being reset.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert explore_prob >= 0.
+        assert explore_prob <= 1.
+        self.explore_prob = explore_prob
+        return self
     
     def predict(self, X, exploit=False, gradient_calc='weighted'):
         """
@@ -2101,6 +2188,26 @@ class SoftmaxExplorer(_BasePolicy):
             assert inflation_rate > 0
         self.multiplier = multiplier
         self.inflation_rate = inflation_rate
+
+    def reset_multiplier(self, multiplier=1.0):
+        """
+        Set the multiplier to a custom number
+
+        Parameters
+        ----------
+        multiplier : float
+            New multiplier for the numbers going to the softmax function.
+            Note that it will still apply the inflation rate after this
+            parameter is being reset.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert multiplier != 0
+        self.multiplier = multiplier
+        return self
     
     def decision_function(self, X, output_score=False, apply_sigmoid_score=True):
         """
