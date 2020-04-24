@@ -16,11 +16,8 @@ from .utils import _check_constructor_input, _check_beta_prior, \
 from ._cy_utils import _choice_over_rows
 
 class _BasePolicy:
-    def __init__(self):
-        pass
-
-    def _add_common_params(self, base_algorithm, beta_prior, smoothing, njobs, nchoices,
-            batch_train, refit_buffer, deep_copy_buffer, assume_unique_reward,
+    def _add_common_params(self, base_algorithm, beta_prior, smoothing, noise_to_smooth,
+            njobs, nchoices, batch_train, refit_buffer, deep_copy_buffer, assume_unique_reward,
             random_state, assign_algo = True, prior_def_ucb = False,
             force_unfit_predict = False):
         
@@ -30,6 +27,7 @@ class _BasePolicy:
         self._add_choices(nchoices)
         _check_constructor_input(base_algorithm, self.nchoices, batch_train)
         self.smoothing = _check_smoothing(smoothing)
+        self.noise_to_smooth = bool(noise_to_smooth)
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
@@ -421,9 +419,15 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
-        than for other methods.
+        beta_prior = ((3/log2(nchoices), 4), 2)
+        Note that it will only generate one random number per arm, so the 'a'
+        parameter should be higher than for other methods.
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -431,6 +435,11 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -492,13 +501,13 @@ class BootstrappedUCB(_BasePolicyWithExploit):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, nsamples=10, percentile=80,
-                 beta_prior='auto', smoothing=None, batch_train=False,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True, batch_train=False,
                  refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, batch_sample_method='gamma',
                  random_state=None, njobs_arms=-1, njobs_samples=1):
         assert (percentile > 0) and (percentile < 100)
         assert nsamples >= 2
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs_arms,
                                 nchoices, batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state,
                                 assign_algo = False, prior_def_ucb = True)
@@ -545,7 +554,13 @@ class BootstrappedTS(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -553,6 +568,11 @@ class BootstrappedTS(_BasePolicyWithExploit):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     sample_unique : bool
         Whether to use a different bootstrapped classifier per row at each arm when
         calling 'predict'. If passing 'False', will take the same bootstrapped
@@ -628,14 +648,15 @@ class BootstrappedTS(_BasePolicyWithExploit):
     .. [2] Chapelle, Olivier, and Lihong Li. "An empirical evaluation of thompson sampling."
            Advances in neural information processing systems. 2011.
     """
-    def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto', smoothing=None,
+    def __init__(self, base_algorithm, nchoices, nsamples=10, beta_prior='auto',
+                 smoothing=None, noise_to_smooth=True,
                  sample_unique = True, sample_weighted = False,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, batch_sample_method='gamma',
                  random_state=None, njobs_arms=-1, njobs_samples=1):
         if sample_weighted:
             sample_unique = True
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs_arms,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs_arms,
                                 nchoices, batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state, assign_algo=False)
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method,
@@ -692,15 +713,26 @@ class LogisticUCB(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a'
-        parameters should be higher than for other methods.
+        beta_prior = ((3/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
+        Note that this method calculates upper bounds rather than expectations, so the 'a'
+        parameter should be higher than for other methods.
         Recommended to use only one of ``beta_prior`` or ``smoothing``. Ignored when
         passing ``ucb_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -726,7 +758,7 @@ class LogisticUCB(_BasePolicyWithExploit):
     """
     def __init__(self, nchoices, percentile=80, fit_intercept=True,
                  lambda_=1.0, ucb_from_empty=False,
-                 beta_prior='auto', smoothing=None,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False,
                  random_state=None, njobs=-1):
         assert (percentile > 0) and (percentile < 100)
@@ -735,7 +767,7 @@ class LogisticUCB(_BasePolicyWithExploit):
                                         fit_intercept=fit_intercept,
                                         alpha=float(percentile) / 100.,
                                         ts=False)
-        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=True,
                                 force_unfit_predict = ucb_from_empty)
@@ -809,15 +841,24 @@ class LogisticTS(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
-        than for other methods.
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
         Ignored when passing ``ci_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -843,7 +884,7 @@ class LogisticTS(_BasePolicyWithExploit):
     """
     def __init__(self, nchoices, sample_from="ci", ci_from_empty=False, multiplier=1.0,
                  fit_intercept=True, lambda_=1.0, sample_unique=False,
-                 beta_prior='auto', smoothing=None,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
         warnings.warn("This class is experimental. Not recommended to rely on it.")
         assert sample_from in ["ci", "coef"]
@@ -857,7 +898,7 @@ class LogisticTS(_BasePolicyWithExploit):
                                         ts=True,
                                         ts_from_ci = (sample_from == "ci"),
                                         sample_unique=sample_unique)
-        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False,
                                 force_unfit_predict=ci_from_empty and sample_from == "ci")
@@ -888,7 +929,13 @@ class SeparateClassifiers(_BasePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -896,6 +943,11 @@ class SeparateClassifiers(_BasePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -946,10 +998,11 @@ class SeparateClassifiers(_BasePolicy):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, base_algorithm, nchoices, beta_prior=None, smoothing=None,
+    def __init__(self, base_algorithm, nchoices, beta_prior=None,
+                 smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
     
@@ -1056,7 +1109,9 @@ class EpsilonGreedy(_BasePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        The impact of ``beta_prior`` for ``EpsilonGreedy`` is not as high as for other
+        policies in this module.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1064,6 +1119,11 @@ class EpsilonGreedy(_BasePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1117,10 +1177,10 @@ class EpsilonGreedy(_BasePolicy):
            Journal of Computer and System Sciences 78.5 (2012): 1538-1556.
     """
     def __init__(self, base_algorithm, nchoices, explore_prob=0.2, decay=0.9999,
-                 beta_prior='auto', smoothing=None, batch_train=False,
-                 refit_buffer=None, deep_copy_buffer=True,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
         assert (explore_prob>0) and (explore_prob<1)
@@ -1260,7 +1320,13 @@ class AdaptiveGreedy(_ActivePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1268,6 +1334,11 @@ class AdaptiveGreedy(_ActivePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1324,6 +1395,9 @@ class AdaptiveGreedy(_ActivePolicy):
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
         If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would be to
+        assume models with all-zero coefficients, in which case the gradient is defined
+        in the absence of any data, but this tends to produce bad end results.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
         ``Generator`` object for random number generation, a ``RandomState``
@@ -1347,12 +1421,13 @@ class AdaptiveGreedy(_ActivePolicy):
     .. [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35, decay=0.9998,
-                 decay_type='percentile', initial_thr='auto', beta_prior='auto', smoothing=None,
+    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35,
+                 decay=0.9998, decay_type='percentile', initial_thr='auto',
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
                  assume_unique_reward=False, active_choice=None, f_grad_norm='auto',
                  case_one_class='auto', random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
         
@@ -1542,13 +1617,16 @@ class ExploreFirst(_ActivePolicy):
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
         If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would be to
+        assume models with all-zero coefficients, in which case the gradient is defined
+        in the absence of any data, but this tends to produce bad end results.
         Ignored when passing ``prob_active_choice=0.``
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1556,6 +1634,11 @@ class ExploreFirst(_ActivePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1609,10 +1692,10 @@ class ExploreFirst(_ActivePolicy):
     def __init__(self, base_algorithm, nchoices, explore_rounds=2500,
                  prob_active_choice=0., active_choice='weighted',
                  f_grad_norm='auto', case_one_class='auto',
-                 beta_prior=None, smoothing=None, batch_train=False,
-                 refit_buffer=None, deep_copy_buffer=True,
+                 beta_prior=None, smoothing=None, noise_to_smooth=True,
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
         
@@ -1751,6 +1834,9 @@ class ActiveExplorer(_ActivePolicy):
             positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
         If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would be to
+        assume models with all-zero coefficients, in which case the gradient is defined
+        in the absence of any data, but this tends to produce bad end results.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
@@ -1765,12 +1851,23 @@ class ActiveExplorer(_ActivePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1822,11 +1919,12 @@ class ActiveExplorer(_ActivePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
-                 explore_prob=.15, decay=0.9997, beta_prior='auto', smoothing=None,
+                 explore_prob=.15, decay=0.9997,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state, assign_algo=False)
 
@@ -1914,7 +2012,13 @@ class SoftmaxExplorer(_BasePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1922,6 +2026,11 @@ class SoftmaxExplorer(_BasePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -1973,10 +2082,10 @@ class SoftmaxExplorer(_BasePolicy):
            arXiv preprint arXiv:1811.04383 (2018).
     """
     def __init__(self, base_algorithm, nchoices, multiplier=1.0, inflation_rate=1.0004,
-                 beta_prior='auto', smoothing=None, batch_train=False,
-                 refit_buffer=None, deep_copy_buffer=True,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
+                 batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
 
@@ -2123,7 +2232,13 @@ class LinUCB(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2).
+        beta_prior = ((3/log2(nchoices), 4), 2).
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Ignored when passing ``ucb_from_empty=True``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -2135,6 +2250,11 @@ class LinUCB(_BasePolicyWithExploit):
         stuck in situations in which it will only choose actions from the first batch
         of observations to which it is fit (if using ``ucb_from_empty=False``), or
         only from the first arms that show rewards (if using ``ucb_from_empty=True``).
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2162,15 +2282,15 @@ class LinUCB(_BasePolicyWithExploit):
     """
     def __init__(self, nchoices, alpha=1.0, lambda_=1.0, fit_intercept=True,
                  use_float=True, method="sm", ucb_from_empty=True,
-                 beta_prior=None, smoothing=None, assume_unique_reward=False,
-                 random_state=None, njobs=1):
+                 beta_prior=None, smoothing=None, noise_to_smooth=True,
+                 assume_unique_reward=False, random_state=None, njobs=1):
         self._ts = False
         self._add_common_lin(alpha, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.alpha, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
                                    ts=False)
-        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=True,
                                 force_unfit_predict=ucb_from_empty)
@@ -2260,7 +2380,13 @@ class LinTS(LinUCB):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
@@ -2270,6 +2396,11 @@ class LinTS(LinUCB):
         if neither ``beta_prior``, nor ``smoothing`` are passed, the policy can get
         stuck in situations in which it will only choose actions from the first batch
         of observations to which it is fit.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2296,15 +2427,15 @@ class LinTS(LinUCB):
     """
     def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, fit_intercept=True,
                  sample_unique=False, use_float=True, method="sm",
-                 beta_prior=None, smoothing=None, assume_unique_reward=False,
-                 random_state=None, njobs = 1):
+                 beta_prior=None, smoothing=None, noise_to_smooth=True,
+                 assume_unique_reward=False, random_state=None, njobs = 1):
         self._ts = True
         self._add_common_lin(v_sq, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.v_sq, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
                                    ts=True, sample_unique=sample_unique)
-        self._add_common_params(base, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False)
 
@@ -2342,13 +2473,24 @@ class BayesianUCB(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a' parameters should be higher
-        than for other methods.
+        beta_prior = ((3/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
+        Note that it will only generate one random number per arm, so the 'a'
+        parameter should be higher than for other methods.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2368,14 +2510,14 @@ class BayesianUCB(_BasePolicyWithExploit):
         as both functions compete for available threads.
     """
     def __init__(self, nchoices, percentile=80, method='advi', n_samples=50, n_iter='auto',
-                 beta_prior='auto', smoothing=None,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=1):
         warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
         ## NOTE: this is a really slow and poorly thought implementation
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
         ## TODO: add a 'partial_fit' with stochastic variational inference.
-        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=False, prior_def_ucb=True)
         assert (percentile >= 0) and (percentile <= 100)
@@ -2427,11 +2569,22 @@ class BayesianTS(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2451,7 +2604,7 @@ class BayesianTS(_BasePolicyWithExploit):
         as both functions compete for available threads.
     """
     def __init__(self, nchoices, method='advi', n_samples=50, n_iter='auto',
-                 beta_prior='auto', smoothing=None,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=1):
         warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
 
@@ -2459,7 +2612,7 @@ class BayesianTS(_BasePolicyWithExploit):
         ## TODO: rewrite using some faster framework such as Edward,
         ##       or with a hard-coded coordinate ascent procedure instead. 
         ## TODO: add a 'partial_fit' with stochastic variational inference.
-        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=False)
         self.nchoices = nchoices
@@ -2496,7 +2649,13 @@ class ParametricTS(_BasePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        beta_prior = ((2/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     beta_prior_ts : tuple(float, float)
         Beta prior used for the distribution from which to draw probabilities given
@@ -2508,6 +2667,11 @@ class ParametricTS(_BasePolicy):
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     batch_train : bool
         Whether the base algorithm will be fit to the data in batches as it comes (streaming),
         or to the whole dataset each time it is refit. Requires a classifier with a
@@ -2554,10 +2718,10 @@ class ParametricTS(_BasePolicy):
         otherwise result in slower runs.
     """
     def __init__(self, base_algorithm, nchoices, beta_prior=None,
-                 beta_prior_ts=(0.,0.), smoothing=None,
+                 beta_prior_ts=(0.,0.), smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        self._add_common_params(base_algorithm, beta_prior, smoothing, njobs, nchoices,
+        self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
         assert beta_prior_ts[0] >= 0.
@@ -2641,15 +2805,26 @@ class PartitionedUCB(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((5/nchoices, 4), 2)
-        Note that it will only generate one random number per arm, so the 'a'
-        parameters should be higher than for other methods.
+        beta_prior = ((3/log2(nchoices), 4), 2)
+        This parameter can have a very large impact in the end results, and it's
+        recommended to tune it accordingly - scenarios with low expected reward rates
+        should have priors that result in drawing small random numbers, whereas
+        scenarios with large expected reward rates should have stronger priors and
+        tend towards larger random numbers. Also, the more arms there are, the smaller
+        the optimal expected value for these random numbers.
+        Note that this method calculates upper bounds rather than expectations, so the 'a'
+        parameter should be higher than for other methods.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         want to define a class that embeds it with some recalibration built-in.
         Not recommended for this method.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2683,7 +2858,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
     .. [2] https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
     """
     def __init__(self, nchoices, percentile=80, ucb_prior=(1,1),
-                 beta_prior='auto', smoothing=None,
+                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=-1,
                  *args, **kwargs):
         assert (percentile > 0) and (percentile < 100)
@@ -2693,7 +2868,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
 
         base = _TreeUCB_n_TS_single(self.ucb_prior, ts=False, alpha=float(percentile) / 100.,
                                     random_state=None, *args, **kwargs)
-        self._add_common_params(base, beta_prior, smoothing, njobs,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs,
                                 nchoices, False, None, False,
                                 assume_unique_reward, random_state,
                                 prior_def_ucb = True,
@@ -2715,6 +2890,11 @@ class PartitionedTS(_BasePolicyWithExploit):
     This method fits only one tree per arm. As such, it's not recommended for
     high-dimensional data.
 
+    Note
+    ----
+    The default values for beta prior are as suggested in the reference paper.
+    It is recommended to change it however.
+
     Parameters
     ----------
     nchoices : int or list-like
@@ -2726,11 +2906,18 @@ class PartitionedTS(_BasePolicyWithExploit):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'.
+        If passing 'auto' (which is *not* the default), will use the same default as for
+        the other policies in this library: beta_prior = ((2/log2(nchoices), 4), 2)
         Additionally, will use (a,b) as prior when sampling from the MAB at a given node.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
         Not recommended for this method.
+    noise_to_smooth : bool
+        If passing ``smoothing``, whether to add a small amount of random
+        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
+        choosing the smallest arm index.
+        Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
         Whether to assume that only one arm has a reward per observation. If set to 'True',
         whenever an arm receives a reward, the classifiers for all other arms will be
@@ -2763,16 +2950,14 @@ class PartitionedTS(_BasePolicyWithExploit):
            arXiv preprint arXiv:1706.04687 (2017).
     .. [2] https://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.html
     """
-    def __init__(self, nchoices, beta_prior=((1,1), 1), smoothing=None,
+    def __init__(self, nchoices, beta_prior=((1,1), 1), smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=-1,
                  *args, **kwargs):
         if beta_prior is None:
             raise ValueError("Must pass a valid 'beta_prior'.")
-        elif beta_prior == "auto":
-            beta_prior = ((1.,1.), 1)
         beta_prior = _check_beta_prior(beta_prior, nchoices)
         base = _TreeUCB_n_TS_single(beta_prior[0], ts=True, random_state=None,
                                     *args, **kwargs)
-        self._add_common_params(base, beta_prior, smoothing, njobs,
+        self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs,
                                 nchoices, False, None, False,
                                 assume_unique_reward, random_state)

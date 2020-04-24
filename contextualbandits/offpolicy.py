@@ -88,8 +88,9 @@ class DoublyRobustEstimator:
         Scores (from the exploration policy) will be converted to the minimum between
         pmin and the original estimate.
     beta_prior : tuple((a, b), n), str "auto", or None
-        Beta prior to pass to 'SeparateClassifiers'. Only used when passing to 'reward_estimator'
-        a classifier with 'predict_proba'.
+        Beta prior to pass to 'SeparateClassifiers'. Only used when passing to
+        'reward_estimator' a classifier with 'predict_proba'. See the documentation
+        of 'SeparateClassifiers' for details about it.
     smoothing : tuple(a, b) or None
         Smoothing parameter to pass to 'SeparateClassifiers' Only used when passing to 'reward_estimator'
         a classifier with 'predict_proba'.

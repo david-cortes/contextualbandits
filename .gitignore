@@ -24,3 +24,4 @@ contextualbandits/linreg/*.directory
 contextualbandits/*.so
 contextualbandits/*.c
 contextualbandits/*.directory
+example/.ipynb_checkpoints/*

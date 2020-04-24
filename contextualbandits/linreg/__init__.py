@@ -63,7 +63,7 @@ class LinearRegression(BaseEstimator):
         The obtained coefficients. If passing 'fit_intercept=True', the intercept
         will be at the last entry.
     """
-    def __init__(self, lambda_=1., fit_intercept=True, method="chol", calc_inv=True,
+    def __init__(self, lambda_=1., fit_intercept=True, method="sm", calc_inv=True,
                  use_float=True, copy_X=True):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
@@ -278,7 +278,7 @@ class LinearRegression(BaseEstimator):
 
         pred = X.dot(self.coef_[:self._n])
         if self.fit_intercept:
-            pred += self.coef_[self._n]
+            pred[:] += self.coef_[self._n]
         return pred
 
     def _multiply_x_A_x(self, X):
@@ -309,8 +309,8 @@ class LinearRegression(BaseEstimator):
             When making predictions with an unfit model (in this case they are
             given by empty zero matrices except for the inverse diagonal matrix
             based on the regularization parameter), whether to add a very small
-            amount of random noise to it. This is useful in order to break ties
-            at random when using multiple models.
+            amount of random noise ~ Uniform(0, 10^-12) to it. This is useful in
+            order to break ties at random when using multiple models.
         random_state : None, np.random.Generator, or np.random.RandomState
             A NumPy 'Generator' or 'RandomState' object instance to use for generating
             random numbers. If passing 'None', will use NumPy's random
@@ -340,10 +340,10 @@ class LinearRegression(BaseEstimator):
             pred = alpha * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
             if add_unfit_noise:
                 if random_state is None:
-                    noise = np.random.random(size = X.shape[0])
+                    noise = np.random.uniform(low=0., high=1e-12, size=X.shape[0])
                 else:
-                    noise = random_state.random(size = X.shape[0])
-                pred[:] += noise / 1e5
+                    noise = random_state.uniform(low=0., high=1e-12, size=X.shape[0])
+                pred[:] += noise
             return pred
 
         pred = self.predict(X)

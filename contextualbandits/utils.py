@@ -119,9 +119,9 @@ def _check_njobs(njobs):
 def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
     if beta_prior == 'auto':
         if not for_ucb:
-            out = ( (3.0 / float(nchoices), 4.0), 2 )
+            out = ( (2.0 / np.log2(nchoices), 4.0), 2 )
         else:
-            out = ( (5.0 / float(nchoices), 4.0), 2 )
+            out = ( (3.0 / np.log2(nchoices), 4.0), 2 )
     elif beta_prior is None:
         out = ((1.0,1.0), 0)
     else:
@@ -151,13 +151,13 @@ def _check_fit_input(X, a, r, choice_names = None):
     assert X.shape[0] == r.shape[0]
     if choice_names is not None:
         a = pd.Categorical(a, choice_names).codes
-        if pd.isnull(a).sum() > 0:
+        if (a < 0).any():
             raise ValueError("Input contains actions/arms that this object does not have.")
     return X, a, r
 
 def _check_X_input(X):
     if (X.__class__.__name__ == 'DataFrame') or isinstance(X, pd.core.frame.DataFrame):
-        X = X.values
+        X = X.to_numpy()
     if isinstance(X, np.matrixlib.defmatrix.matrix):
         warnings.warn("'defmatrix' will be cast to array.")
         X = np.array(X)
@@ -330,9 +330,11 @@ def _gen_random_grad_norms(X, n_pos, n_neg, random_state):
 def _gen_zero_norms(X, n_pos, n_neg):
     return np.zeros((X.shape[0], 2))
 
-def _apply_smoothing(preds, smoothing, counts):
+def _apply_smoothing(preds, smoothing, counts, add_noise, random_state):
     if (smoothing is not None) and (counts is not None):
         preds[:, :] = (preds * counts + smoothing[0]) / (counts + smoothing[1])
+        if add_noise:
+            preds[:, :] += random_state.uniform(low=0., high=1e-12, size=preds.shape)
     return None
 
 def _apply_sigmoid(x):
@@ -343,15 +345,15 @@ def _apply_sigmoid(x):
     return None
 
 def _apply_inverse_sigmoid(x):
-    x[x == 0] = 1e-8
-    x[x == 1] = 1 - 1e-8
+    x[x <= 0] = 1e-8
+    x[x >= 1] = 1. - 1e-8
     if (len(x.shape) == 2):
         x[:, :] = np.log(x / (1.0 - x))
     else:
         x[:] = np.log(x / (1.0 - x))
     return None
 
-def is_from_module(base):
+def is_from_this_module(base):
     return (isinstance(base, _BootstrappedClassifierBase) or
             isinstance(base, _LinUCB_n_TS_single) or
             isinstance(base, _LogisticUCB_n_TS_single) or
@@ -361,6 +363,7 @@ def is_from_module(base):
 def _apply_softmax(x):
     x[:, :] = np.exp(x - x.max(axis=1).reshape((-1, 1)))
     x[:, :] = x / x.sum(axis=1).reshape((-1, 1))
+    x[x > 1] = 1.
     return None
 
 class _FixedPredictor:
@@ -660,7 +663,7 @@ class _OneVsRest:
                  X, a, r, n,
                  thr, alpha, beta,
                  random_state,
-                 smooth=False, assume_un=False,
+                 smooth=False, noise_to_smooth=True, assume_un=False,
                  partialfit=False, refit_buffer=0, deep_copy=False,
                  force_fit=False, force_counters=False,
                  prev_ovr=None, warm=False,
@@ -668,6 +671,7 @@ class _OneVsRest:
                  njobs=1):
         self.n = n
         self.smooth = smooth
+        self.noise_to_smooth = bool(noise_to_smooth)
         self.assume_un = assume_un
         self.njobs = njobs
         self.force_fit = bool(force_fit)
@@ -724,11 +728,11 @@ class _OneVsRest:
                 for choice in range(self.n):
                     if isinstance(self.algos[choice], _FixedPredictor):
                         self.algos[choice] = deepcopy(base)
-                        if is_from_module(base):
+                        if is_from_this_module(base):
                             self.algos[choice].random_state = self.rng_arm[choice]
             else: 
                 self.algos = [deepcopy(base) for choice in range(self.n)]
-                if is_from_module(base):
+                if is_from_this_module(base):
                     for choice in range(self.n):
                         self.algos[choice].random_state = self.rng_arm[choice]
 
@@ -866,7 +870,8 @@ class _OneVsRest:
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._decision_function_single)(choice, X, preds, 1) \
                     for choice in range(self.n))
-        _apply_smoothing(preds, self.smooth, self.counters)
+        _apply_smoothing(preds, self.smooth, self.counters,
+                         self.noise_to_smooth, self.random_state)
         return preds
 
     def _decision_function_single(self, choice, X, preds, depth=2):
@@ -906,7 +911,8 @@ class _OneVsRest:
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._decision_function_single)(choice, X, preds, 1) \
                     for choice in range(self.n))
-        _apply_smoothing(preds, self.smooth, self.counters)
+        _apply_smoothing(preds, self.smooth, self.counters,
+                         self.noise_to_smooth, self.random_state)
         _apply_inverse_sigmoid(preds)
         _apply_softmax(preds)
         return preds
@@ -916,7 +922,8 @@ class _OneVsRest:
         Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                 (delayed(self._decision_function_single)(choice, X, preds, 0) \
                     for choice in range(self.n))
-        _apply_smoothing(preds, self.smooth, self.counters)
+        _apply_smoothing(preds, self.smooth, self.counters,
+                         self.noise_to_smooth, self.random_state)
         return preds
 
     def predict(self, X):
@@ -1183,7 +1190,7 @@ class _LogisticUCB_n_TS_single:
         ### UCB
         if not self.is_fitted:
             pred = self.conf_coef * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
-            pred[:] += self.random_state.random(size=pred.shape[0]) / 1e12
+            pred[:] += self.random_state.uniform(low=0., high=1e-12, size=pred.shape[0])
             _apply_sigmoid(pred)
             return pred
 
@@ -1262,7 +1269,7 @@ class _TreeUCB_n_TS_single:
                 return self.random_state.beta(self.aux_beta[0], self.aux_beta[1], size=n)
             else:
                 mean = self.aux_beta[0] / (self.aux_beta[0] + self.aux_beta[1])
-                noise = self.random_state.random(size=n) / 1e12
+                noise = self.random_state.uniform(low=0., high=1e-12, size=n)
                 return mean + noise
 
         pred_node = self.model.apply(X)
