@@ -25,3 +25,4 @@ contextualbandits/*.so
 contextualbandits/*.c
 contextualbandits/*.directory
 example/.ipynb_checkpoints/*
+docs/_build/*
