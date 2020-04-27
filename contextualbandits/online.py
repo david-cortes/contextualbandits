@@ -514,6 +514,26 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         self.percentile = percentile
         self._add_bootstrapped_inputs(base_algorithm, batch_sample_method, nsamples, njobs_samples, self.percentile)
 
+    def reset_percentile(self, percentile=80):
+        """
+        Set the upper confidence bound percentile to a custom number
+
+        Parameters
+        ----------
+        percentile : int [0,100]
+            Percentile of the confidence interval to take.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert (percentile > 0) and (percentile < 100)
+        if self.is_fitted:
+            self._oracles.reset_attribute("percentile", percentile)
+        self.base_algorithm.percentile = percentile
+        return self
+
 class BootstrappedTS(_BasePolicyWithExploit):
     """
     Bootstrapped Thompson Sampling
@@ -765,13 +785,33 @@ class LogisticUCB(_BasePolicyWithExploit):
         assert lambda_ > 0.
         base = _LogisticUCB_n_TS_single(lambda_=float(lambda_),
                                         fit_intercept=fit_intercept,
-                                        alpha=float(percentile) / 100.,
+                                        alpha=float(percentile),
                                         ts=False)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=True,
                                 force_unfit_predict = ucb_from_empty)
         self.percentile = percentile
+
+    def reset_percentile(self, percentile=80):
+        """
+        Set the upper confidence bound percentile to a custom number
+
+        Parameters
+        ----------
+        percentile : int [0,100]
+            Percentile of the confidence interval to take.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert (percentile > 0) and (percentile < 100)
+        if self.is_fitted:
+            self._oracles.reset_attribute("alpha", percentile)
+        self.base_algorithm.alpha = percentile
+        return self
 
 class LogisticTS(_BasePolicyWithExploit):
     """
@@ -1248,7 +1288,7 @@ class EpsilonGreedy(_BasePolicy):
             return pred
         else:
             score_max = np.max(scores, axis = 1).reshape((-1, 1))
-            score_max[ix_change_rnd] = 1 / self.nchoices
+            score_max[ix_change_rnd] = 1. / self.nchoices
             return {"choice" : pred, "score" : score_max}
 
 class _ActivePolicy(_BasePolicy):
@@ -1340,13 +1380,16 @@ class AdaptiveGreedy(_ActivePolicy):
         (actions from that arm that resulted in a reward), it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        beta_prior = ((3/nchoices, 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
         scenarios with large expected reward rates should have stronger priors and
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
+        Note that the default value for ``AdaptiveGreedy`` is different than from the
+        other methods in this module, and it's recommended to experiment with different
+        values of this hyperparameter.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -1447,6 +1490,8 @@ class AdaptiveGreedy(_ActivePolicy):
                  batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
                  assume_unique_reward=False, active_choice=None, f_grad_norm='auto',
                  case_one_class='auto', random_state=None, njobs=-1):
+        if beta_prior == "auto":
+            beta_prior = ((3./nchoices, 4.), 2)
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
@@ -2420,6 +2465,35 @@ class LinUCB(_BasePolicyWithExploit):
             self.v_sq = self.alpha
             del self.alpha
 
+    def reset_alpha(self, alpha=1.0):
+        """
+        Set the upper confidence bound parameter to a custom number
+
+        Note
+        ----
+        This method is only for LinUCB, not for LinTS.
+
+        Parameters
+        ----------
+        alpha : float
+            Parameter to control the upper confidence bound (more is higher).
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        if self._ts:
+            raise ValueError("Method is only available for LinUCB")
+        if isinstance(alpha, int):
+            alpha = float(alpha)
+        assert isinstance(alpha, float)
+        self.alpha = alpha
+        self.base_algorithm.alpha = alpha
+        if self.is_fitted:
+            self._oracles.reset_attribute("alpha", alpha)
+        return self
+
 class LinTS(LinUCB):
     """
     Linear Thompson Sampling
@@ -2545,6 +2619,29 @@ class LinTS(LinUCB):
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False)
+
+    def reset_v_sq(self, v_sq=1.0):
+        """
+        Set the covariance multiplier to a custom number
+
+        Parameters
+        ----------
+        v_sq : float
+            Parameter by which to multiply the covariance matrix (more means higher variance).
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        if isinstance(v_sq, int):
+            v_sq = float(v_sq)
+        assert isinstance(v_sq, float)
+        self.v_sq = v_sq
+        self.base_algorithm.alpha = v_sq
+        if self.is_fitted:
+            self._oracles.reset_attribute("alpha", v_sq)
+        return self
 
 class BayesianUCB(_BasePolicyWithExploit):
     """
@@ -2836,6 +2933,27 @@ class ParametricTS(_BasePolicy):
         self.beta_prior_ts = beta_prior_ts
         self.force_counters = True
 
+    def reset_beta_prior_ts(self, beta_prior_ts=(0.,0.)):
+        """
+        Set the Thompson prior to a custom tuple
+
+        Parameters
+        ----------
+        beta_prior_ts : tuple(float, float)
+            Beta prior used for the distribution from which to draw probabilities given
+            the base algorithm's estimates. This is independent of ``beta_prior``, and
+            they will not be used together under the same arm. Pass '(0,0)' for no prior.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert beta_prior_ts[0] >= 0.
+        assert beta_prior_ts[1] >= 0.
+        self.beta_prior_ts = beta_prior_ts
+        return self
+
     def predict(self, X, exploit = False, output_score = False):
         """
         Selects actions according to this policy for new data.
@@ -2863,7 +2981,7 @@ class ParametricTS(_BasePolicy):
             X = _check_X_input(X)
             return np.argmax(self._oracles.decision_function(X), axis=1)
         pred = self.decision_function(X)
-        counters = self._oracles.get_counts()
+        counters = self._oracles.get_nobs_by_arm()
         with_model = counters >= self.beta_prior[1]
         counters = counters.reshape((1,-1))
         pred[:, with_model] = self.random_state.beta(
@@ -2973,7 +3091,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
         assert ucb_prior[1] >= 0.
         self.ucb_prior = (float(ucb_prior[0]), float(ucb_prior[1]))
 
-        base = _TreeUCB_n_TS_single(self.ucb_prior, ts=False, alpha=float(percentile) / 100.,
+        base = _TreeUCB_n_TS_single(self.ucb_prior, ts=False, alpha=float(percentile),
                                     random_state=None, *args, **kwargs)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs,
                                 nchoices, False, None, False,
@@ -2982,6 +3100,51 @@ class PartitionedUCB(_BasePolicyWithExploit):
                                 force_unfit_predict = beta_prior is None)
         if self.beta_prior[1] <= 0:
             self.force_unfit_predict = True
+
+    def reset_percentile(self, percentile=80):
+        """
+        Set the upper confidence bound percentile to a custom number
+
+        Parameters
+        ----------
+        percentile : int [0,100]
+            Percentile of the confidence interval to take.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert (percentile > 0) and (percentile < 100)
+        if self.is_fitted:
+            self._oracles.reset_attribute("alpha", percentile)
+        self.base_algorithm.alpha = percentile
+        return self
+
+    def reset_ucb_prior(self, ucb_prior=(1,1)):
+        """
+        Set the upper confidence bound prior to a custom tuple
+
+        Parameters
+        ----------
+        ucb_prior : tuple(float, float)
+            Prior for the upper confidence bounds generated at each tree leaf. First
+            number will be added to the number of positives, and second number to
+            the number of negatives. If passing ``beta_prior=None``, will use these alone
+            to generate an upper confidence bound and will break ties at random.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert ucb_prior[0] >= 0.
+        assert ucb_prior[1] >= 0.
+        self.ucb_prior = (float(ucb_prior[0]), float(ucb_prior[1]))
+        self.base_algorithm.beta_prior = ucb_prior
+        if self.is_fitted:
+            self._oracles.reset_attribute("beta_prior", ucb_prior)
+        return self
 
 class PartitionedTS(_BasePolicyWithExploit):
     """

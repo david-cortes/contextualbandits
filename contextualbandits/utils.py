@@ -947,7 +947,7 @@ class _OneVsRest:
     def get_n_neg(self, choice):
         return self.beta_counters[2, choice]
 
-    def get_counts(self):
+    def get_nobs_by_arm(self):
         return self.beta_counters[1] + self.beta_counters[2]
 
     def exploit(self, X):
@@ -960,6 +960,11 @@ class _OneVsRest:
 
     def _exploit_single(self, choice, pred, X):
         pred[:, choice] = self.algos[choice].exploit(X)
+
+    def reset_attribute(self, attr_name, attr_value):
+        for model in self.algos:
+            if is_from_this_module(model):
+                setattr(model, attr_name, attr_value)
 
 
 class _BayesianLogisticRegression:
@@ -1083,7 +1088,7 @@ class _LinUCB_n_TS_single:
 class _LogisticUCB_n_TS_single:
     def __init__(self, lambda_=1., fit_intercept=True, alpha=0.95,
                  m=1.0, ts=False, ts_from_ci=True, sample_unique=False, random_state=1):
-        self.conf_coef = norm_dist.ppf(alpha)
+        self.conf_coef = alpha
         self.m = m
         self.fit_intercept = fit_intercept
         self.lambda_ = lambda_
@@ -1098,6 +1103,11 @@ class _LogisticUCB_n_TS_single:
                                         solver='lbfgs', max_iter=15000,
                                         warm_start=True)
         self.Sigma = np.empty((0,0), dtype=np.float64)
+
+    def __setattr__(self, name, value):
+        if (name == "conf_coef"):
+            value = norm_dist.ppf(value / 100.)
+        super().__setattr__(name, value)
 
     def fit(self, X, y, *args, **kwargs):
         if X.shape[0] == 0:
@@ -1214,11 +1224,16 @@ class _TreeUCB_n_TS_single:
                  *args, **kwargs):
         self.beta_prior = beta_prior
         self.random_state = random_state
-        self.conf_coef = norm_dist.ppf(alpha)
+        self.conf_coef = alpha
         self.ts = bool(ts)
         self.model = DecisionTreeClassifier(*args, **kwargs)
         self.is_fitted = False
         self.aux_beta = (beta_prior[0], beta_prior[1])
+
+    def __setattr__(self, name, value):
+        if (name == "conf_coef"):
+            value = norm_dist.ppf(value / 100.)
+        super().__setattr__(name, value)
 
     def update_aux(self, y):
         self.aux_beta[0] += (y >  0.).sum()
