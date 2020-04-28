@@ -97,6 +97,8 @@ class _BasePolicy:
         self : object
             This object
         """
+        if not self.is_fitted:
+            raise ValueError("Cannot drop arm from unifitted policy.")
         drop_ix = self._get_drop_ix(arm_name)
         self._oracles._drop_arm(drop_ix)
         self._drop_ix(drop_ix)
@@ -158,6 +160,8 @@ class _BasePolicy:
         self : object
             This object
         """
+        if not self.is_fitted:
+            raise ValueError("Cannot add arm to unfitted policy.")
         assert isinstance(n_w_rew,  int)
         assert isinstance(n_wo_rew, int)
         assert n_w_rew >= 0
@@ -1484,7 +1488,7 @@ class AdaptiveGreedy(_ActivePolicy):
     .. [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=35,
+    def __init__(self, base_algorithm, nchoices, window_size=100, percentile=35,
                  decay=0.9998, decay_type='percentile', initial_thr='auto',
                  beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
