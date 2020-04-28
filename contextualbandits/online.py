@@ -226,7 +226,7 @@ class _BasePolicy:
                                    self.nchoices,
                                    self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
                                    self.random_state,
-                                   self.smoothing,
+                                   self.smoothing, self.noise_to_smooth,
                                    self.assume_unique_reward,
                                    self.batch_train,
                                    refit_buffer = self.refit_buffer,

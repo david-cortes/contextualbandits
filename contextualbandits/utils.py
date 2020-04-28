@@ -853,9 +853,9 @@ class _OneVsRest:
         if self.assume_un:
             this_choice = (a == choice)
             arms_w_rew = (r > 0.)
-            yclass = r[this_choice | arms_w_rew]
-            yclass[arms_w_rew & (~this_choice) ] = 0
+            yclass = np.where(arms_w_rew & (~this_choice), np.zeros_like(r), r)
             this_choice = this_choice | arms_w_rew
+            yclass = yclass[this_choice]
         else:
             this_choice = (a == choice)
             yclass = r[this_choice]
