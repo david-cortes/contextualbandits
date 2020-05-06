@@ -13,7 +13,8 @@ from scipy.linalg.cython_blas cimport (
     )
 from scipy.linalg.cython_lapack cimport (
     sposv as tposv,
-    spotri as tpotri
+    spotri as tpotri,
+    spotrf as tpotrf
     )
 
 ctypedef float realtp

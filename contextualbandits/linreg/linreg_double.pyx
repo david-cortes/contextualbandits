@@ -13,7 +13,8 @@ from scipy.linalg.cython_blas cimport (
     )
 from scipy.linalg.cython_lapack cimport (
     dposv as tposv,
-    dpotri as tpotri
+    dpotri as tpotri,
+    dpotrf as tpotrf
     )
 
 ctypedef double realtp

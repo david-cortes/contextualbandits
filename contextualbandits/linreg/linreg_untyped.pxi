@@ -712,3 +712,19 @@ def x_A_x_batch(
             outp[:] += invXtX[n,n]
 
     return outp
+
+def get_matrix_inv(
+        np.ndarray[realtp, ndim=2] X,
+        np.ndarray[realtp, ndim=2] invX
+    ):
+    if X.shape[0] == 0:
+        return None
+    invX[:, :] = X[:, :]
+    cdef realtp *ptr_X = &X[0,0]
+    cdef realtp *ptr_invX = &invX[0,0]
+    cdef int n = X.shape[0]
+    cdef int ignore = 0
+    cdef char lo = 'L'
+    with nogil:
+        tpotrf(&lo, &n, ptr_invX, &n, &ignore)
+        tpotri(&lo, &n, ptr_invX, &n, &ignore)

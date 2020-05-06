@@ -67,8 +67,8 @@ class LinearRegression(BaseEstimator):
                  use_float=True, copy_X=True):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
-        self.method = method
-        self.calc_inv = bool(calc_inv)
+        self._method = method
+        self._calc_inv = bool(calc_inv)
         self._use_float = bool(use_float)
         self.copy_X = bool(copy_X)
 
@@ -104,7 +104,37 @@ class LinearRegression(BaseEstimator):
     def use_float(self, value):
         self._use_float = use_float
         self._set_dtype(force_cast=True)
+
+    @property
+    def method(self):
+        return self._method
     
+    @method.setter
+    def method(self, value):
+        assert value in ["chol", "sm"]
+        if self._method != value:
+            cy_funs = _wrapper_float if self._use_float else _wrapper_double
+            if self._method == "sm":
+                self._XtX = np.empty(self._invXtX.shape, dtype=self._dtype)
+                cy_funs.get_matrix_inv(self._invXtX, self._XtX)
+            elif (not self._calc_inv):
+                self._invXtX = np.empty(self._XtX.shape, dtype=self._dtype)
+                cy_funs.get_matrix_inv(self._XtX, self._invXtX)
+                self._calc_inv = True
+        self._method = value
+
+    @property
+    def calc_inv(self):
+        return self._calc_inv
+    
+    @calc_inv.setter
+    def calc_inv(self, value):
+        if bool(value) != self._calc_inv:
+            if self._method == "chol":
+                self._invXtX = np.empty(self._XtX.shape, dtype=self._dtype)
+                cy_funs.get_matrix_inv(self._XtX, self._invXtX)
+            self._calc_inv = bool(value)
+
 
     def _process_X_y_w(self, X, y, sample_weight, only_X=False):
         if X.dtype != self._dtype:
