@@ -19,6 +19,7 @@ class build_ext_subclass( build_ext ):
                 for e in self.extensions:
                     e.extra_compile_args = [arg for arg in extra_compile_args if arg != '-fopenmp']
                     e.extra_link_args    = [arg for arg in extra_link_args    if arg != '-fopenmp']
+        build_ext.build_extensions(self)
 
 setup(
     name = 'contextualbandits',
@@ -38,7 +39,7 @@ setup(
     url = 'https://github.com/david-cortes/contextualbandits',
     keywords = 'contextual bandits offset tree doubly robust policy linucb thompson sampling',
     classifiers = [],
-    cmdclass = {'build_ext': build_ext},
+    cmdclass = {'build_ext': build_ext_subclass},
     ext_modules = [
         Extension("contextualbandits.linreg._wrapper_double",
                   sources=["contextualbandits/linreg/linreg_double.pyx"],
@@ -46,7 +47,7 @@ setup(
         Extension("contextualbandits.linreg._wrapper_float",
                   sources=["contextualbandits/linreg/linreg_float.pyx"],
                   include_dirs=[np.get_include()]),
-        Extension("contextualbandits._cy_utils",
+        Extension("contextualbandits._cy_utils", language="c++",
                   sources=["contextualbandits/_cy_utils.pyx"],
                   include_dirs=[np.get_include()])
     ]

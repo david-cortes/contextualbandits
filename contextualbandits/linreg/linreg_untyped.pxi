@@ -3,7 +3,7 @@ cimport numpy as np
 import ctypes
 from libc.string cimport memcpy, memset
 from cython.parallel cimport prange
-
+from cython cimport boundscheck, nonecheck, wraparound
 
 ctypedef enum CBLAS_ORDER:
     CblasRowMajor = 101
@@ -527,7 +527,7 @@ def update_matrices_inv(
 
     cdef long i
     if Xcsr is None:
-        with nogil:
+        with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             for i in range(m):
                 cblas_tsymv(CblasRowMajor, CblasUpper, n,
                             1., ptr_XtX_inv, n_plusb, prt_X + i*n, 1,
@@ -553,7 +553,7 @@ def update_matrices_inv(
         ptr_csr_data = get_ptr_realtp(Xcsr.data)
         ptr_csr_indices = get_ptr_long(Xcsr.indices)
         ptr_csr_indptr = get_ptr_long(Xcsr.indptr)
-        with nogil:
+        with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             for i in range(m):
                 tgemv_dense_sp(
                     ptr_XtX_inv, n_plusb,
@@ -678,7 +678,7 @@ def x_A_x_batch(
         ptr_tempX = &tempX[0,0]
         ptr_X = &X[0,0]
 
-        with nogil:
+        with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             cblas_tsymm(CblasRowMajor, CblasRight, CblasUpper,
                         m, n,
                         1., ptr_invXtX, n_plusb,
@@ -699,7 +699,7 @@ def x_A_x_batch(
         if Xcsr.dtype != C_realtp:
             Xcsr = Xcsr.astype(C_realtp)
 
-        with nogil:
+        with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             for i in range(n_plusb):
                 for j in range(i):
                     ptr_invXtX[j + i*n_plusb] = ptr_invXtX[i + j*n_plusb]

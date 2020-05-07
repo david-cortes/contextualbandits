@@ -8,6 +8,8 @@ global-exclude *.dll
 global-exclude *.dynlib
 global-exclude *.directory
 include pyproject.toml
+include contextualbandits/cy_cpp_helpers.cpp
+exclude contextualbandits/_cy_utils.cpp
 exclude .gitignore
 exclude .gitattributes
 exclude example/*

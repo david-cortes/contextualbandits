@@ -3,6 +3,7 @@ cimport numpy as np
 from cython.parallel cimport prange, threadid
 import ctypes
 from scipy.linalg.cython_lapack cimport dpotrf, dpotri
+from cython cimport boundscheck, nonecheck, wraparound
 
 def _choice_over_rows(
         np.ndarray[double, ndim=2] pred,
@@ -47,7 +48,7 @@ def _matrix_inv_symm(
     cdef int ignore
     cdef int *ptr_ignore = &ignore
     cdef long i
-    with nogil:
+    with nogil, boundscheck(False), nonecheck(False), wraparound(False):
         for i in range(n):
             ptr_X[i + i*n] += lambda_
         dpotrf(ptr_lo, ptr_n, ptr_X, ptr_n, ptr_ignore)
@@ -66,9 +67,43 @@ def _create_node_counters(
 
     cdef long n = node_ix.shape[0]
     cdef long i
-    with nogil:
+    with nogil, boundscheck(False), nonecheck(False), wraparound(False):
         for i in range(n):
             if y[i] > 0:
                 cnt_pos[node_ix[i]] += 1
             else:
                 cnt_neg[node_ix[i]] += 1
+
+cdef extern from "cy_cpp_helpers.cpp":
+    void topN_byrow_cpp(
+        double scores[],
+        long outp[],
+        long nrow,
+        long ncol,
+        long n,
+        int nthreads
+    ) nogil
+
+def topN_byrow(
+        np.ndarray[double, ndim=2] scores,
+        long n,
+        int nthreads
+    ):
+    cdef long nrow = scores.shape[0]
+    cdef long m = scores.shape[1]
+    cdef np.ndarray[long, ndim=2] outp = np.empty((nrow, n), dtype=ctypes.c_long)
+
+    cdef long *ptr_outp = &outp[0,0]
+    cdef double *ptr_scores = &scores[0,0]
+
+    with nogil:
+        topN_byrow_cpp(
+            ptr_scores,
+            ptr_outp,
+            nrow,
+            m,
+            n,
+            nthreads
+        )
+
+    return outp

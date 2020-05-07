@@ -23,6 +23,7 @@ contextualbandits/linreg/*.c
 contextualbandits/linreg/*.directory
 contextualbandits/*.so
 contextualbandits/*.c
+contextualbandits/_cy_utils.cpp
 contextualbandits/*.directory
 example/.ipynb_checkpoints/*
 docs/_build/*

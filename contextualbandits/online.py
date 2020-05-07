@@ -1345,9 +1345,8 @@ class AdaptiveGreedy(_ActivePolicy):
     a fixed percentile of that distribution to be the threshold.
     In the second case, these are calculated in separate batches rather than in a sliding window.
     
-    The original idea was taken from the paper in the references and adapted to the
-    contextual bandits setting like this. Can also be set to make choices in the same way as
-    'ActiveExplorer' rather than random (see 'greedy_choice' parameter) when using logistic regression.
+    Can also be set to make choices in the same way as
+    'ActiveExplorer' rather than random (see 'greedy_choice' parameter).
     
     Parameters
     ----------
@@ -1488,7 +1487,7 @@ class AdaptiveGreedy(_ActivePolicy):
     .. [2] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, base_algorithm, nchoices, window_size=100, percentile=35,
+    def __init__(self, base_algorithm, nchoices, window_size=500, percentile=30,
                  decay=0.9998, decay_type='percentile', initial_thr='auto',
                  beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
