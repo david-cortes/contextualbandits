@@ -1517,22 +1517,31 @@ class AdaptiveGreedy(_ActivePolicy):
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
-        If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
-        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
-        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
-        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
-        object from NumPy to use for generating random numbers.
-        If passing 'auto', will generate random numbers:
+            * If passing 'None', will assume that ``base_algorithm`` can be fit to
+              data of only-positive or only-negative class without problems, and that
+              it can calculate gradients and predictions with a ``base_algorithm``
+              object that has not been fitted. Be aware that the methods 'predict',
+              'predict_proba', and 'decision_function' in ``base_algorithm`` might be
+              overwritten with another method that wraps it in a try-catch block, so
+              don't rely on it producing errors when unfitted.
+            * If passing a function, will take the output of it as the row-wise
+              gradient norms when it compares them against other arms/classes, with
+              the first column having the values if the observations were of negative
+              class, and the second column if they were positive class. The other
+              inputs to this function are the number of positive and negative examples
+              that have been observed, and a ``Generator`` object from NumPy to use
+              for generating random numbers.
+            * If passing 'auto', will generate random numbers:
 
-            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-        If passing 'zero', it will output zero whenever models have not been fitted.
-        Note that the theoretically correct approach for a logistic regression would be to
-        assume models with all-zero coefficients, in which case the gradient is defined
-        in the absence of any data, but this tends to produce bad end results.
+            * If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would
+        be to assume models with all-zero coefficients, in which case the gradient
+        is defined in the absence of any data, but this tends to produce bad end
+        results.
     random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
         ``Generator`` object for random number generation, a ``RandomState``
@@ -1810,22 +1819,31 @@ class ExploreFirst(_ActivePolicy):
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
-        If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
-        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
-        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
-        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
-        object from NumPy to use for generating random numbers.
-        If passing 'auto', will generate random numbers:
+            * If passing 'None', will assume that ``base_algorithm`` can be fit to
+              data of only-positive or only-negative class without problems, and that
+              it can calculate gradients and predictions with a ``base_algorithm``
+              object that has not been fitted. Be aware that the methods 'predict',
+              'predict_proba', and 'decision_function' in ``base_algorithm`` might be
+              overwritten with another method that wraps it in a try-catch block, so
+              don't rely on it producing errors when unfitted.
+            * If passing a function, will take the output of it as the row-wise
+              gradient norms when it compares them against other arms/classes, with
+              the first column having the values if the observations were of negative
+              class, and the second column if they were positive class. The other
+              inputs to this function are the number of positive and negative examples
+              that have been observed, and a ``Generator`` object from NumPy to use
+              for generating random numbers.
+            * If passing 'auto', will generate random numbers:
 
-            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-        If passing 'zero', it will output zero whenever models have not been fitted.
-        Note that the theoretically correct approach for a logistic regression would be to
-        assume models with all-zero coefficients, in which case the gradient is defined
-        in the absence of any data, but this tends to produce bad end results.
+            * If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would
+        be to assume models with all-zero coefficients, in which case the gradient
+        is defined in the absence of any data, but this tends to produce bad end
+        results.
         Ignored when passing ``prob_active_choice=0.``
     beta_prior : str 'auto', None, or tuple ((a,b), n)
         If not None, when there are less than 'n' positive samples from a class
@@ -2060,22 +2078,31 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
     case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
-        If passing None, will assume that 'base_algorithm' can be fit to data of only-positive or only-negative class without
-        problems, and that it can calculate gradients and predictions with a 'base_algorithm' object that has not been fitted.
-        If passing a function, will take the output of it as the row-wise gradient norms when it compares them against other
-        arms/classes, with the first column having the values if the observations were of negative class, and the second column if they
-        were positive class. The other inputs to this function are the number of positive and negative examples that have been observed, and a ``Generator``
-        object from NumPy to use for generating random numbers.
-        If passing 'auto', will generate random numbers:
+            * If passing 'None', will assume that ``base_algorithm`` can be fit to
+              data of only-positive or only-negative class without problems, and that
+              it can calculate gradients and predictions with a ``base_algorithm``
+              object that has not been fitted. Be aware that the methods 'predict',
+              'predict_proba', and 'decision_function' in ``base_algorithm`` might be
+              overwritten with another method that wraps it in a try-catch block, so
+              don't rely on it producing errors when unfitted.
+            * If passing a function, will take the output of it as the row-wise
+              gradient norms when it compares them against other arms/classes, with
+              the first column having the values if the observations were of negative
+              class, and the second column if they were positive class. The other
+              inputs to this function are the number of positive and negative examples
+              that have been observed, and a ``Generator`` object from NumPy to use
+              for generating random numbers.
+            * If passing 'auto', will generate random numbers:
 
-            negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-            positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
+                * positive: ~ Gamma(log10(n_features) * (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
 
-        If passing 'zero', it will output zero whenever models have not been fitted.
-        Note that the theoretically correct approach for a logistic regression would be to
-        assume models with all-zero coefficients, in which case the gradient is defined
-        in the absence of any data, but this tends to produce bad end results.
+            * If passing 'zero', it will output zero whenever models have not been fitted.
+        Note that the theoretically correct approach for a logistic regression would
+        be to assume models with all-zero coefficients, in which case the gradient
+        is defined in the absence of any data, but this tends to produce bad end
+        results.
     active_choice : str in {'min', 'max', 'weighted'}
         How to calculate the gradient that an observation would have on the loss
         function for each classifier, given that it could be either class (positive or negative)
