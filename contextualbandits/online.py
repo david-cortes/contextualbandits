@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 
-import numpy as np, warnings
+import numpy as np, warnings, ctypes
 from .utils import _check_constructor_input, _check_beta_prior, \
             _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
             _ZeroPredictor, _OnePredictor, _OneVsRest,\
@@ -13,7 +13,7 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
-from ._cy_utils import _choice_over_rows
+from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
 
 class _BasePolicy:
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, noise_to_smooth,
@@ -68,6 +68,43 @@ class _BasePolicy:
                 raise ValueError("Arm/choice names contain duplicates.")
         else:
             raise ValueError("'nchoices' must be an integer or list with named arms.")
+
+    def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method,
+                                 nsamples, njobs_samples, percentile,
+                                 ts_byrow = False, ts_weighted = False):
+        assert (batch_sample_method == 'gamma') or (batch_sample_method == 'poisson')
+        assert isinstance(nsamples, int)
+        assert nsamples >= 1
+        self.batch_sample_method = batch_sample_method
+        self.nsamples = nsamples
+        self.njobs_samples = _check_njobs(njobs_samples)
+        if "predict_proba" in dir(base_algorithm):
+            self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method,
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
+                )
+        elif "decision_function" in dir(base_algorithm):
+            self.base_algorithm = _BootstrappedClassifier_w_decision_function(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method,
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
+                )
+        else:
+            self.base_algorithm = _BootstrappedClassifier_w_predict(
+                base_algorithm, self.nsamples, percentile,
+                self.batch_train, self.batch_sample_method,
+                random_state = 1, ### gets changed later
+                njobs = self.njobs_samples,
+                ts_byrow = ts_byrow,
+                ts_weighted = ts_weighted
+                )
 
     def _name_arms(self, pred):
         if self.choice_names is None:
@@ -277,12 +314,6 @@ class _BasePolicy:
     def decision_function(self, X):
         """
         Get the scores for each arm following this policy's action-choosing criteria.
-
-        Note
-        ----
-        For 'ExploreFirst', the results from this method will not actually follow the policy in
-        assigning random numbers during the exploration phase.
-        Same for 'AdaptiveGreedy' - it won't make random choices according to the policy.
         
         Parameters
         ----------
@@ -296,7 +327,11 @@ class _BasePolicy:
         """
         X = _check_X_input(X)
         if not self.is_fitted:
-            raise ValueError("Object has not been fit to data.")
+            warnings.warn("Model object has not been fit to data, predictions will be random.")
+            return self.random_state.random(size=(X.shape[0], self.nchoices))
+        return self._score_matrix(X)
+
+    def _score_matrix(self, X):
         return self._oracles.decision_function(X)
 
     def _predict_random_if_unfit(self, X, output_score):
@@ -308,45 +343,44 @@ class _BasePolicy:
         else:
             return {"choice" : pred, "score" : (1.0 / self.nchoices) * np.ones(size = X.shape[0], dtype = "float64")}
 
+    def topN(self, X, n):
+        """
+        Get top-N ranked actions for each observation
+
+        Note
+        ----
+        This method will rank choices/arms according to what the policy
+        dictates - it is not an exploitation-mode rank, so if e.g. there are
+        random choices for some observations, there will be random ranks in here.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            New observations for which to rank actions according to this policy.
+        n : int
+            Number of top-ranked actions to output
+
+        Returns
+        -------
+        topN : array(n_samples, n)
+            The top-ranked actions for each observation
+        """
+        assert n >= 1
+        if isinstance(n, float):
+            n = int(n)
+        assert isinstance(n, int)
+        if n > self.nchoices:
+            raise ValueError("'n' cannot be greater than 'nchoices'.")
+        X = _check_X_input(X)
+        scores = self._score_matrix(X)
+        if n == self.nchoices:
+            topN = np.argsort(scores, axis=1)
+        else:
+            topN = topN_byrow(scores, n, self.njobs)
+        return self._name_arms(topN)
+
 
 class _BasePolicyWithExploit(_BasePolicy):
-    def _add_bootstrapped_inputs(self, base_algorithm, batch_sample_method,
-                                 nsamples, njobs_samples, percentile,
-                                 ts_byrow = False, ts_weighted = False):
-        assert (batch_sample_method == 'gamma') or (batch_sample_method == 'poisson')
-        assert isinstance(nsamples, int)
-        assert nsamples >= 1
-        self.batch_sample_method = batch_sample_method
-        self.nsamples = nsamples
-        self.njobs_samples = _check_njobs(njobs_samples)
-        if "predict_proba" in dir(base_algorithm):
-            self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
-                base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method,
-                random_state = 1, ### gets changed later
-                njobs = self.njobs_samples,
-                ts_byrow = ts_byrow,
-                ts_weighted = ts_weighted
-                )
-        elif "decision_function" in dir(base_algorithm):
-            self.base_algorithm = _BootstrappedClassifier_w_decision_function(
-                base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method,
-                random_state = 1, ### gets changed later
-                njobs = self.njobs_samples,
-                ts_byrow = ts_byrow,
-                ts_weighted = ts_weighted
-                )
-        else:
-            self.base_algorithm = _BootstrappedClassifier_w_predict(
-                base_algorithm, self.nsamples, percentile,
-                self.batch_train, self.batch_sample_method,
-                random_state = 1, ### gets changed later
-                njobs = self.njobs_samples,
-                ts_byrow = ts_byrow,
-                ts_weighted = ts_weighted
-                )
-
     def _exploit(self, X):
         return self._oracles.exploit(X)
 
@@ -1278,11 +1312,12 @@ class EpsilonGreedy(_BasePolicy):
         """
         if not self.is_fitted:
             return self._predict_random_if_unfit(X, output_score)
-        scores = self.decision_function(X)
+        scores = self._oracles.decision_function(X)
         pred = np.argmax(scores, axis = 1)
         if not exploit:
-            ix_change_rnd = (self.random_state.random(size =  X.shape[0]) <= self.explore_prob)
-            pred[ix_change_rnd] = self.random_state.integers(self.nchoices, size = ix_change_rnd.sum())
+            ix_change_rnd = (self.random_state.random(size = X.shape[0]) <= self.explore_prob)
+            n_change_rnd = ix_change_rnd.sum()
+            pred[ix_change_rnd] = self.random_state.integers(self.nchoices, size = n_change_rnd)
         pred = self._name_arms(pred)
 
         if self.decay is not None:
@@ -1294,6 +1329,17 @@ class EpsilonGreedy(_BasePolicy):
             score_max = np.max(scores, axis = 1).reshape((-1, 1))
             score_max[ix_change_rnd] = 1. / self.nchoices
             return {"choice" : pred, "score" : score_max}
+
+    def _score_matrix(self, X):
+        scores = self._oracles.decision_function(X)
+        ix_change_rnd = (self.random_state.random(size = X.shape[0]) <= self.explore_prob)
+        n_change_rnd = ix_change_rnd.sum()
+        scores[ix_change_rnd] = self.random_state.random(size=(n_change_rnd, self.nchoices))
+
+        if self.decay is not None:
+            self.explore_prob *= self.decay ** X.shape[0]
+        return scores
+
 
 class _ActivePolicy(_BasePolicy):
     ### TODO: parallelize this in cython for the default case
@@ -1323,6 +1369,27 @@ class _ActivePolicy(_BasePolicy):
             else:
                 raise ValueError("Something went wrong. Please open an issue in GitHub indicating what you were doing.")
         return pred
+
+    def reset_active_choice(self, active_choice='weighted'):
+        """
+        Set the active gradient criteria to a custom form
+
+        Parameters
+        ----------
+        active_choice : str in {'min', 'max', 'weighted'}
+            How to calculate the gradient that an observation would have on the loss
+            function for each classifier, given that it could be either class (positive or negative)
+            for the classifier that predicts each arm. If weighted, they are weighted by the same
+            probability estimates from the base algorithm.
+
+        Returns
+        -------
+        self : obj
+            This object
+        """
+        assert active_choice in ['min', 'max', 'weighted']
+        self.active_choice = active_choice
+        return self
 
 
 class AdaptiveGreedy(_ActivePolicy):
@@ -1592,22 +1659,28 @@ class AdaptiveGreedy(_ActivePolicy):
             Actions chosen by the policy.
         """
         # TODO: add option to output scores
+        X = _check_X_input(X)
         if not self.is_fitted:
             return self._predict_random_if_unfit(X, False)
-        return self._name_arms(self._predict(X, exploit))
+        return self._name_arms(self._predict(X, exploit, True))
     
-    def _predict(self, X, exploit = False):
-        X = _check_X_input(X)
+    def _predict(self, X, exploit = False, choose = True):
         
         if X.shape[0] == 0:
-            return np.array([])
+            if choose:
+                return np.array([])
+            else:
+                return np.empty((0, self.nchoices), dtype=ctypes.c_double)
         
         if exploit:
-            return self._oracles.predict(X)
+            if choose:
+                return self._oracles.predict(X)
+            else:
+                return self._oracles.decision_function(X)
         
         # fixed threshold, anything below is always random
         if (self.decay == 1) or (self.decay is None):
-            pred, pred_max = self._calc_preds(X)
+            pred, pred_max = self._calc_preds(X, choose)
 
         # variable threshold that needs to be updated
         else:
@@ -1615,7 +1688,7 @@ class AdaptiveGreedy(_ActivePolicy):
             
             # case 1: number of predictions to make would still fit within current window
             if remainder_window > X.shape[0]:
-                pred, pred_max = self._calc_preds(X)
+                pred, pred_max = self._calc_preds(X, choose)
                 self.window_cnt += X.shape[0]
                 self.window = np.r_[self.window, pred_max]
                 
@@ -1625,10 +1698,13 @@ class AdaptiveGreedy(_ActivePolicy):
             # case 2: number of predictions to make would span more than current window
             else:
                 # predict for the remainder of this window
-                pred, pred_max = self._calc_preds(X[:remainder_window, :])
+                pred, pred_max = self._calc_preds(X[:remainder_window, :], choose)
                 
                 # allocate the rest that don't fit in this window
-                pred_all = np.zeros(X.shape[0])
+                if choose:
+                    pred_all = np.zeros(X.shape[0])
+                else:
+                    pred_all = np.zeros((X.shape[0], self.nchoices), dtype=ctypes.c_double)
                 pred_all[:remainder_window] = pred
                 
                 # complete window, update percentile if needed
@@ -1644,7 +1720,7 @@ class AdaptiveGreedy(_ActivePolicy):
                 self._apply_decay(remainder_window)
                 
                 # predict the rest recursively
-                pred_all[remainder_window:] = self.predict(X[remainder_window:, :])
+                pred_all[remainder_window:] = self._predict(X[remainder_window:, :], False, choose)
                 return pred_all
                 
         return pred
@@ -1658,25 +1734,37 @@ class AdaptiveGreedy(_ActivePolicy):
             else:
                 raise ValueError("'decay_type' must be one of 'threshold' or 'percentile'")
 
-    def _calc_preds(self, X):
+    def _calc_preds(self, X, choose = True):
         pred_proba = self._oracles.decision_function(X)
         pred_max = pred_proba.max(axis = 1)
-        pred = np.argmax(pred_proba, axis = 1)
+        if choose:
+            pred = np.argmax(pred_proba, axis = 1)
+        else:
+            pred = pred_proba
         set_greedy = pred_max <= self.thr
         if np.any(set_greedy):
-            self._choose_greedy(set_greedy, X, pred, pred_proba)
+            self._choose_greedy(set_greedy, X, pred, pred_proba, choose)
         return pred, pred_max
 
-    def _choose_greedy(self, set_greedy, X, pred, pred_all):
+    def _choose_greedy(self, set_greedy, X, pred, pred_all, choose = True):
         if self.active_choice is None:
-            pred[set_greedy] = self.random_state.integers(self.nchoices, size = set_greedy.sum())
+            n_greedy = set_greedy.sum()
+            if choose:
+                pred[set_greedy] = self.random_state.integers(self.nchoices, size = n_greedy)
+            else:
+                pred[set_greedy] = self.random_state.random(size = (n_greedy, self.nchoices))
         else:
-            pred[set_greedy] = np.argmax(
-                self._crit_active(
-                    X[set_greedy],
-                    pred_all[set_greedy],
-                    self.active_choice),
-                axis = 1)
+            scores = self._crit_active(
+                        X[set_greedy],
+                        pred_all[set_greedy],
+                        self.active_choice)
+            if choose:
+                pred[set_greedy] = np.argmax(scores, axis = 1)
+            else:
+                pred[set_greedy] = scores
+
+    def _score_matrix(self, X):
+        return self._predict(X, False, False)
 
 class ExploreFirst(_ActivePolicy):
     """
@@ -1826,6 +1914,18 @@ class ExploreFirst(_ActivePolicy):
             self.active_choice = active_choice
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
 
+    def reset_count(self):
+        """
+        Resets the counter for exploitation mode
+
+        Returns
+        -------
+        self
+
+        """
+        self.explore_cnt = 0
+        return self
+
     def predict(self, X, exploit = False):
         """
         Selects actions according to this policy for new data.
@@ -1869,7 +1969,7 @@ class ExploreFirst(_ActivePolicy):
             # case 2: some predictions are within allowance, others are not
             else:
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
-                pred = np.empty(X.shape[0], type = np.float64)
+                pred = np.empty(X.shape[0], type = ctypes.c_double)
                 pred[:n_explore] = self.random_state.integers(self.nchoices, n_explore)
                 self._choose_active(X[:n_explore], pred[:n_explore])
                 pred[n_explore:] = self._oracles.predict(X[n_explore:])
@@ -1877,31 +1977,45 @@ class ExploreFirst(_ActivePolicy):
         else:
             return self._oracles.predict(X)
 
-    def _choose_active(self, X, pred):
+    def _score_matrix(self, X):
+        if self.explore_cnt < self.explore_rounds:
+            self.explore_cnt += X.shape[0]
+
+            # case 1: all predictions are within allowance
+            if self.explore_cnt <= self.explore_rounds:
+                scores = self.random_state.random(size=(X.shape[0], self.nchoices))
+                self._choose_active(X, scores, choose=False)
+            
+            # case 2: some predictions are within allowance, others are not
+            else:
+                scores = np.empty((X.shape[0], self.nchoices), type = ctypes.c_double)
+                scores[:n_explore] = self.random_state.random(size=(n_explore, self.nchoices))
+                self._choose_active(X[:n_explore], scores[:n_explore], choose=False)
+                scores[n_explore:] = self._oracles.decision_function(X[n_explore:])
+            
+        else:
+            scores = self._oracles.decision_function(X)
+
+        return scores
+
+    def _choose_active(self, X, pred, choose=True):
         if self.prob_active_choice <= 0.:
             return None
 
         pick_active = self.random_state.random(size=X.shape[0]) <= self.prob_active_choice
-        pred[pick_active] = np.argmax(
-                self._crit_active(
-                    X[pick_active],
-                    self._oracles.decision_function(X[pick_active]),
-                    self.active_choice),
-                axis = 1)
+        if not np.any(pick_active):
+            return None
+        by_crit = self._crit_active(
+                        X[pick_active],
+                        self._oracles.decision_function(X[pick_active]),
+                        self.active_choice)
+        if choose:
+            pred[pick_active] = np.argmax(by_crit, axis = 1)
+        else:
+            pred[pick_active] = by_crit
 
-    def reset_count(self):
-        """
-        Resets the counter for exploitation mode
 
-        Returns
-        -------
-        self
-
-        """
-        self.explore_cnt = 0
-        return self
-
-class ActiveExplorer(_ActivePolicy):
+class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
     """
     Active Explorer
     
@@ -1927,6 +2041,10 @@ class ActiveExplorer(_ActivePolicy):
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
             3) A 'predict' method with outputs (n_samples,) with values in [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
+    nchoices : int or list-like
+        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
+        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
+        custom name.
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
@@ -1952,10 +2070,11 @@ class ActiveExplorer(_ActivePolicy):
         Note that the theoretically correct approach for a logistic regression would be to
         assume models with all-zero coefficients, in which case the gradient is defined
         in the absence of any data, but this tends to produce bad end results.
-    nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
-        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
-        custom name.
+    active_choice : str in {'min', 'max', 'weighted'}
+        How to calculate the gradient that an observation would have on the loss
+        function for each classifier, given that it could be either class (positive or negative)
+        for the classifier that predicts each arm. If weighted, they are weighted by the same
+        probability estimates from the base algorithm.
     explore_prob : float (0,1)
         Probability of selecting an action according to active learning criteria.
     decay : float (0,1)
@@ -2033,11 +2152,14 @@ class ActiveExplorer(_ActivePolicy):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, base_algorithm, nchoices, f_grad_norm='auto', case_one_class='auto',
+    def __init__(self, base_algorithm, nchoices,
+                 f_grad_norm='auto', case_one_class='auto', active_choice='weighted',
                  explore_prob=.15, decay=0.9997,
                  beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
+        assert active_choice in ['min', 'max', 'weighted']
+        self.active_choice = active_choice
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
@@ -2071,43 +2193,23 @@ class ActiveExplorer(_ActivePolicy):
         assert explore_prob <= 1.
         self.explore_prob = explore_prob
         return self
-    
-    def predict(self, X, exploit=False, gradient_calc='weighted'):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-        gradient_calc : str, one of 'weighted', 'max' or 'min'
-            How to calculate the gradient that an observation would have on the loss
-            function for each classifier, given that it could be either class (positive or negative)
-            for the classifier that predicts each arm. If weighted, they are weighted by the same
-            probability estimates from the base algorithm.
-            
-        Returns
-        -------
-        pred : array (n_samples,)
-            Actions chosen by the policy.
-        """
-        if not self.is_fitted:
-            return self._predict_random_if_unfit(X, False)
-        X = _check_X_input(X)
-        
+
+    def _score_matrix(self, X, exploit=False):
         pred = self._oracles.decision_function(X)
         if not exploit:
             change_greedy = self.random_state.random(size=X.shape[0]) <= self.explore_prob
             if np.any(change_greedy):
-                pred[change_greedy, :] = self._crit_active(X[change_greedy, :], pred[change_greedy, :], gradient_calc)
+                pred[change_greedy, :] = self._crit_active(
+                                            X[change_greedy, :],
+                                            pred[change_greedy, :],
+                                            self.active_choice)
             
             if self.decay is not None:
                 self.explore_prob *= self.decay ** X.shape[0]
-        
-        return self._name_arms(np.argmax(pred, axis = 1))
+        return pred
+
+    def _exploit(self, X):
+        return self._oracles.decision_function(X)
 
 class SoftmaxExplorer(_BasePolicy):
     """
@@ -2302,13 +2404,7 @@ class SoftmaxExplorer(_BasePolicy):
         if exploit:
             X = _check_X_input(X)
             return np.argmax(self._oracles.decision_function(X), axis=1)
-        pred = self.decision_function(X)
-        _apply_inverse_sigmoid(pred)
-        if self.multiplier is not None:
-            pred *= self.multiplier
-            if self.inflation_rate is not None:
-                self.multiplier *= self.inflation_rate ** pred.shape[0]
-        _apply_softmax(pred)
+        pred = self._softmax_scores(X)
         chosen =  _choice_over_rows(pred, self.random_state, self.njobs)
 
         if output_score:
@@ -2319,6 +2415,50 @@ class SoftmaxExplorer(_BasePolicy):
             return chosen
         else:
             return {"choice" : chosen, "score" : score_chosen}
+
+    def _softmax_scores(self, X):
+        pred = self.decision_function(X)
+        _apply_inverse_sigmoid(pred)
+        if self.multiplier is not None:
+            pred *= self.multiplier
+            if self.inflation_rate is not None:
+                self.multiplier *= self.inflation_rate ** pred.shape[0]
+        _apply_softmax(pred)
+        return pred
+
+    def topN(self, X, n):
+        """
+        Get top-N ranked actions for each observation
+
+        Note
+        ----
+        This method will rank choices/arms according to what the policy
+        dictates - it is not an exploitation-mode rank, so if e.g. there are
+        random choices for some observations, there will be random ranks in here.
+
+        Parameters
+        ----------
+        X : array (n_samples, n_features)
+            New observations for which to rank actions according to this policy.
+        n : int
+            Number of top-ranked actions to output
+
+        Returns
+        -------
+        topN : array(n_samples, n)
+            The top-ranked actions for each observation
+        """
+        assert n >= 1
+        if isinstance(n, float):
+            n = int(n)
+        assert isinstance(n, int)
+        if n > self.nchoices:
+            raise ValueError("'n' cannot be greater than 'nchoices'.")
+        X = _check_X_input(X)
+
+        scores = self._softmax_scores(X)
+        topN = topN_byrow_softmax(scores, n, self.njobs, self.random_state)
+        return self._name_arms(topN)
 
 
 class LinUCB(_BasePolicyWithExploit):
@@ -2830,7 +2970,7 @@ class BayesianTS(_BasePolicyWithExploit):
                     nsamples = self.n_samples, mode = 'ts')
         self.batch_train = False
 
-class ParametricTS(_BasePolicy):
+class ParametricTS(_BasePolicyWithExploit):
     """
     Parametric Thompson Sampling
 
@@ -2957,33 +3097,8 @@ class ParametricTS(_BasePolicy):
         self.beta_prior_ts = beta_prior_ts
         return self
 
-    def predict(self, X, exploit = False, output_score = False):
-        """
-        Selects actions according to this policy for new data.
-        
-        Parameters
-        ----------
-        X : array (n_samples, n_features)
-            New observations for which to choose an action according to this policy.
-        exploit : bool
-            Whether to make a prediction according to the policy, or to just choose the
-            arm with the highest expected reward according to current models.
-        output_score : bool
-            Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
-            
-        Returns
-        -------
-        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
-            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
-            with the chosen arm and the score that the arm got following this policy with the classifiers used.
-        """
-        if not self.is_fitted:
-            return self._predict_random_if_unfit(X, output_score)
-        if exploit:
-            X = _check_X_input(X)
-            return np.argmax(self._oracles.decision_function(X), axis=1)
-        pred = self.decision_function(X)
+    def _score_matrix(self, X):
+        pred = self._oracles.decision_function(X)
         counters = self._oracles.get_nobs_by_arm()
         with_model = counters >= self.beta_prior[1]
         counters = counters.reshape((1,-1))
@@ -2991,13 +3106,10 @@ class ParametricTS(_BasePolicy):
             np.clip(pred[:, with_model] * counters[:, with_model] + self.beta_prior_ts[0], a_min=1e-5, a_max=None),
             np.clip((1. - pred[:, with_model]) * counters[:, with_model] + self.beta_prior_ts[1], a_min=1e-5, a_max=None)
             )
+        return pred
 
-        chosen = self._name_arms(np.argmax(pred, axis = 1))
-        if not output_score:
-            return chosen
-        else:
-            score_max = np.max(pred, axis=1).reshape((-1, 1))
-            return {"choice" : chosen, "score" : score_max}
+    def _exploit(self, X):
+        return self._oracles.decision_function(X)
 
 class PartitionedUCB(_BasePolicyWithExploit):
     """

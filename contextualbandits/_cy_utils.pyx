@@ -6,11 +6,13 @@ from scipy.linalg.cython_lapack cimport dpotrf, dpotri
 from cython cimport boundscheck, nonecheck, wraparound
 
 def _choice_over_rows(
-        np.ndarray[double, ndim=2] pred,
+        pred_in,
         rs,
         int nthreads
     ):
-    pred = np.require(pred, requirements=["C_CONTIGUOUS", "OWNDATA", "WRITEABLE"])
+    cdef np.ndarray[double, ndim=2] pred = \
+        np.require(pred_in, dtype=ctypes.c_double,
+                   requirements=["C_CONTIGUOUS", "OWNDATA"])
     pred[:] /= pred.sum(axis = 1, keepdims = True)
     cdef long m = pred.shape[0]
     cdef long n = pred.shape[1]
@@ -84,11 +86,24 @@ cdef extern from "cy_cpp_helpers.cpp":
         int nthreads
     ) nogil
 
+    void topN_softmax_cpp(
+        double scores[],
+        long outp[],
+        long nrow,
+        long ncol,
+        long n,
+        int nthreads,
+        unsigned long seed
+    ) nogil
+
 def topN_byrow(
-        np.ndarray[double, ndim=2] scores,
+        scores_in,
         long n,
         int nthreads
     ):
+    cdef np.ndarray[double, ndim=2] scores = \
+        np.require(scores_in, dtype=ctypes.c_double,
+                   requirements=["C_CONTIGUOUS", "OWNDATA"])
     cdef long nrow = scores.shape[0]
     cdef long m = scores.shape[1]
     cdef np.ndarray[long, ndim=2] outp = np.empty((nrow, n), dtype=ctypes.c_long)
@@ -106,4 +121,32 @@ def topN_byrow(
             nthreads
         )
 
+    return outp
+
+def topN_byrow_softmax(
+        scores_in,
+        long n,
+        int nthreads,
+        rng
+    ):
+    cdef np.ndarray[double, ndim=2] scores = \
+        np.require(scores_in, dtype=ctypes.c_double,
+                   requirements=["C_CONTIGUOUS", "OWNDATA"])
+    cdef long nrow = scores.shape[0]
+    cdef long m = scores.shape[1]
+    cdef np.ndarray[long, ndim=2] outp = np.empty((nrow, n), dtype=ctypes.c_long)
+    cdef unsigned long seed = rng.integers(0, np.iinfo(ctypes.c_ulong).max, dtype=ctypes.c_ulong)
+
+    cdef long *ptr_outp = &outp[0,0]
+    cdef double *ptr_scores = &scores[0,0]
+    with nogil:
+        topN_softmax_cpp(
+            ptr_scores,
+            ptr_outp,
+            nrow,
+            m,
+            n,
+            nthreads,
+            seed
+        )
     return outp
