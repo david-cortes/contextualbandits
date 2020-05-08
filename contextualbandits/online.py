@@ -8,7 +8,7 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
             _BayesianLogisticRegression,\
             _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
-            _add_method_predict_robust, _check_active_inp, \
+            _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
@@ -1387,6 +1387,8 @@ class _ActivePolicy(_BasePolicy):
         self : obj
             This object
         """
+        if self.active_choice is None: ### AdaptiveGreedy
+            raise ValueError("Cannot change active choice for non-active policy.")
         assert active_choice in ['min', 'max', 'weighted']
         self.active_choice = active_choice
         return self
@@ -1586,12 +1588,13 @@ class AdaptiveGreedy(_ActivePolicy):
         if decay is not None:
             assert (decay >= 0.0) and (decay <= 1.0)
         if (decay_type == 'percentile') and (percentile is None):
-            decay = 1
+            decay = 1.
         self.decay = decay
 
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
+            self._force_counters = True
         self.active_choice = active_choice
 
     def reset_threshold(self, threshold="auto"):
@@ -1913,6 +1916,9 @@ class ExploreFirst(_ActivePolicy):
             assert active_choice in ['min', 'max', 'weighted']
             self.active_choice = active_choice
             _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
+            self._force_counters = True
+        else:
+            self.active_choice = None
 
     def reset_count(self):
         """
@@ -2163,16 +2169,12 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
-                                assume_unique_reward, random_state, assign_algo=False)
-
-        if self.batch_train:
-            base_algorithm = _add_method_predict_robust(base_algorithm)
-        self.base_algorithm = base_algorithm
-        
+                                assume_unique_reward, random_state)
         assert isinstance(explore_prob, float)
         assert (explore_prob > 0.) and (explore_prob <= 1.)
         self.explore_prob = explore_prob
         self.decay = decay
+        self._force_counters = True
 
     def reset_explore_prob(self, explore_prob=0.2):
         """
