@@ -19,7 +19,7 @@
 #
 import os
 import sys
-sys.path.insert(0, os.path.abspath('./'))
+sys.path.insert(0, os.path.abspath('../'))
 
 
 # -- General configuration ------------------------------------------------
@@ -100,7 +100,11 @@ if not on_rtd:  # only import and set the theme if we're building docs locally
 # further.  For a list of options available for each theme, see the
 # documentation.
 #
-# html_theme_options = {}
+html_theme_options = {
+    'collapse_navigation': False,
+    'sticky_navigation': False,
+    'navigation_depth': 4,
+}
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
