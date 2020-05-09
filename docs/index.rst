@@ -68,8 +68,8 @@ Policy classes - first one from each group is the recommended one to use:
     * `ExploreFirst <#contextualbandits.online.ExploreFirst>`_
 * Active choices:
 
-    * `AdaptiveGreedy <#contextualbandits.online.AdaptiveGreedy>`_ (with `active_choice != None`)
     * `ActiveExplorer <#contextualbandits.online.ActiveExplorer>`_
+    * `AdaptiveGreedy <#contextualbandits.online.AdaptiveGreedy>`_ (with `active_choice != None`)
     * `ExploreFirst <#contextualbandits.online.ExploreFirst>`_ (with `prob_active_choice > 0`)
 * Thompson sampling:
 
@@ -78,14 +78,12 @@ Policy classes - first one from each group is the recommended one to use:
     * `ParametricTS <#contextualbandits.online.ParametricTS>`_
     * `LogisticTS <#contextualbandits.online.LogisticTS>`_
     * `LinTS <#contextualbandits.online.LinTS>`_
-    * `BayesianTS <#contextualbandits.online.BayesianTS>`_
 * Upper confidence bound:
 
     * `BootstrappedUCB <#contextualbandits.online.BootstrappedUCB>`_
     * `PartitionedUCB <#contextualbandits.online.PartitionedUCB>`_
     * `LogisticUCB <#contextualbandits.online.LogisticUCB>`_
     * `LinUCB <#contextualbandits.online.LinUCB>`_
-    * `BayesianUCB <#contextualbandits.online.BayesianUCB>`_
 * Naive:
 
     * `SeparateClassifiers <#contextualbandits.online.SeparateClassifiers>`_
@@ -101,20 +99,6 @@ ActiveExplorer
 AdaptiveGreedy
 --------------
 .. autoclass:: contextualbandits.online.AdaptiveGreedy
-    :members:
-    :undoc-members:
-    :inherited-members:
-
-BayesianTS
-----------
-.. autoclass:: contextualbandits.online.BayesianTS
-    :members:
-    :undoc-members:
-    :inherited-members:
-
-BayesianUCB
------------
-.. autoclass:: contextualbandits.online.BayesianUCB
     :members:
     :undoc-members:
     :inherited-members:

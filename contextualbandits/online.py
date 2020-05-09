@@ -6,7 +6,6 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _ZeroPredictor, _OnePredictor, _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
-            _BayesianLogisticRegression,\
             _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
             _check_active_inp, \
             _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
@@ -179,8 +178,9 @@ class _BasePolicy:
             arm plus 1 (will only work when the names are integers).
         fitted_classifier : object
             If a classifier has already been fit to rewards coming from this arm, you can pass it here, otherwise,
-            will be started from the same 'base_classifier' as the initial arms. If using bootstrapped or Bayesian methods,
-            don't pass a classifier here (unless using the classes in `utils._BootstrappedClassifierBase` or `utils._BayesianLogisticRegression`)
+            will be started from the same 'base_classifier' as the initial arms. If using bootstrapped methods or methods from this module which do not
+            accept arbitrary classifiers as input,
+            don't pass a classifier here (unless using the classes like e.g. `utils._BootstrappedClassifierBase`)
         n_w_rew : int
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
@@ -2814,190 +2814,6 @@ class LinTS(LinUCB):
         if self.is_fitted:
             self._oracles.reset_attribute("alpha", v_sq)
         return self
-
-class BayesianUCB(_BasePolicyWithExploit):
-    """
-    Bayesian Upper Confidence Bound
-    
-    Gets an upper confidence bound by Bayesian Logistic Regression estimates.
-    
-    Note
-    ----
-    The implementation here uses PyMC3's GLM formula with either MCMC sampling
-    or ADVI. This is a very, very slow implementation, and will probably take at
-    least two or three orders or magnitude more to fit compared to other methods. It's not advised to use it unless having a very good GPU that PyMC3 could use.
-    
-    Parameters
-    ----------
-    nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
-        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
-        custom name.
-    percentile : int [0,100]
-        Percentile of the predictions sample to take.
-    method : str, either 'advi', 'nuts', or 'metropolis'
-        Method used to sample coefficients (see PyMC3's documentation for details).
-    n_samples : int
-        Number of samples to take when making predictions.
-    n_iter : int or str 'auto'
-        Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
-        will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
-        If passing 'auto', will use 5000 for ADVI, 10000 for NUTS, and 25000 for
-        Metropolis, but this might me insufficient, especially for large datasets.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/log2(nchoices), 4), 2)
-        This parameter can have a very large impact in the end results, and it's
-        recommended to tune it accordingly - scenarios with low expected reward rates
-        should have priors that result in drawing small random numbers, whereas
-        scenarios with large expected reward rates should have stronger priors and
-        tend towards larger random numbers. Also, the more arms there are, the smaller
-        the optimal expected value for these random numbers.
-        Note that it will only generate one random number per arm, so the 'a'
-        parameter should be higher than for other methods.
-    smoothing : None or tuple (a,b)
-        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
-        where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    noise_to_smooth : bool
-        If passing ``smoothing``, whether to add a small amount of random
-        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
-        choosing the smallest arm index.
-        Ignored when passing ``smoothing=None``.
-    assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to 'True',
-        whenever an arm receives a reward, the classifiers for all other arms will be
-        fit to that observation too, having negative label.
-    random_state : int, None, RandomState, or Generator
-        Either an integer which will be used as seed for initializing a
-        ``Generator`` object for random number generation, a ``RandomState``
-        object (from NumPy) from which to draw an integer, or a ``Generator``
-        object (from NumPy), which will be used directly.
-        While this controls random number generation for this meteheuristic,
-        there can still be other sources of variations upon re-runs, such as
-        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
-    njobs : int or None
-        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
-        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
-        and if these have multi-threading enabled, it might result in a slow-down
-        as both functions compete for available threads.
-    """
-    def __init__(self, nchoices, percentile=80, method='advi', n_samples=50, n_iter='auto',
-                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
-                 assume_unique_reward=False, random_state=None, njobs=1):
-        warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
-        ## NOTE: this is a really slow and poorly thought implementation
-        ## TODO: rewrite using some faster framework such as Edward,
-        ##       or with a hard-coded coordinate ascent procedure instead. 
-        ## TODO: add a 'partial_fit' with stochastic variational inference.
-        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
-                                False, None, False, assume_unique_reward,
-                                random_state, assign_algo=False, prior_def_ucb=True)
-        assert (percentile >= 0) and (percentile <= 100)
-        self.percentile = percentile
-        self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
-        self.method = method
-        self.base_algorithm = _BayesianLogisticRegression(
-                    method = self.method, niter = self.n_iter,
-                    nsamples = self.n_samples, mode = 'ucb', perc = self.percentile)
-        self.batch_train = False
-
-
-class BayesianTS(_BasePolicyWithExploit):
-    """
-    Bayesian Thompson Sampling
-    
-    Performs Thompson Sampling by sampling a set of Logistic Regression coefficients
-    from each class, then predicting the class with highest estimate.
-
-    Note
-    ----
-    The implementation here uses PyMC3's GLM formula with either MCMC sampling
-    or ADVI. This is a very, very slow implementation, and will probably take at
-    least two or three orders or magnitude more to fit compared to other methods. It's not advised to use it unless having a very good GPU that PyMC3 could use.
-
-    Note
-    ----
-    Unlike the other Thompson sampling classes, this class
-    does not offer the option 'sample_unique' - it's equivalent to
-    always having `False` for that parameter in the other methods.
-    
-    Parameters
-    ----------
-    nchoices : int or list-like
-        Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
-        the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
-        custom name.
-    method : str, either 'advi', 'nuts', or 'metropolis'
-        Method used to sample coefficients (see PyMC3's documentation for details).
-    n_samples : int
-        Number of samples to take when making predictions.
-    n_iter : int or str 'auto'
-        Number of iterations when using ADVI, or number of draws when using NUTS. Note that, when using NUTS,
-        will still first draw a burn-out or tuning 500 samples before 'niter' more have been produced.
-        If passing 'auto', will use 5000 for ADVI, 10000 for NUTS, and 25000 for
-        Metropolis, but this might me insufficient, especially for large datasets.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
-        This parameter can have a very large impact in the end results, and it's
-        recommended to tune it accordingly - scenarios with low expected reward rates
-        should have priors that result in drawing small random numbers, whereas
-        scenarios with large expected reward rates should have stronger priors and
-        tend towards larger random numbers. Also, the more arms there are, the smaller
-        the optimal expected value for these random numbers.
-    smoothing : None or tuple (a,b)
-        If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
-        where 'n' is the number of times each arm was chosen in the training data.
-        Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    noise_to_smooth : bool
-        If passing ``smoothing``, whether to add a small amount of random
-        noise ~ Uniform(0, 10^-12) in order to break ties at random instead of
-        choosing the smallest arm index.
-        Ignored when passing ``smoothing=None``.
-    assume_unique_reward : bool
-        Whether to assume that only one arm has a reward per observation. If set to 'True',
-        whenever an arm receives a reward, the classifiers for all other arms will be
-        fit to that observation too, having negative label.
-    random_state : int, None, RandomState, or Generator
-        Either an integer which will be used as seed for initializing a
-        ``Generator`` object for random number generation, a ``RandomState``
-        object (from NumPy) from which to draw an integer, or a ``Generator``
-        object (from NumPy), which will be used directly.
-        While this controls random number generation for this meteheuristic,
-        there can still be other sources of variations upon re-runs, such as
-        data aggregations in parallel (e.g. from OpenMP or BLAS functions).
-    njobs : int or None
-        Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
-        set it to the number of CPU cores. Be aware that the algorithm will use BLAS function calls,
-        and if these have multi-threading enabled, it might result in a slow-down
-        as both functions compete for available threads.
-    """
-    def __init__(self, nchoices, method='advi', n_samples=50, n_iter='auto',
-                 beta_prior='auto', smoothing=None, noise_to_smooth=True,
-                 assume_unique_reward=False, random_state=None, njobs=1):
-        warnings.warn("This strategy is experimental and will be extremely slow. Do not rely on it.")
-
-        ## NOTE: this is a really slow and poorly thought implementation
-        ## TODO: rewrite using some faster framework such as Edward,
-        ##       or with a hard-coded coordinate ascent procedure instead. 
-        ## TODO: add a 'partial_fit' with stochastic variational inference.
-        self._add_common_params(_ZeroPredictor(), beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
-                                False, None, False, assume_unique_reward,
-                                random_state, assign_algo=False)
-        self.nchoices = nchoices
-        self.n_iter, self.n_samples = _check_bay_inp(method, n_iter, n_samples)
-        self.method = method
-        self.base_algorithm = _BayesianLogisticRegression(
-                    method = self.method, niter = self.n_iter,
-                    nsamples = self.n_samples, mode = 'ts')
-        self.batch_train = False
 
 class ParametricTS(_BasePolicyWithExploit):
     """

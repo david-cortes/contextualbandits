@@ -139,7 +139,7 @@ def _check_smoothing(smoothing):
         return None
     assert len(smoothing) >= 2
     assert (smoothing[0] >= 0) & (smoothing[1] >= 0)
-    assert smoothing[1] > smoothing[0]
+    assert smoothing[1] >= smoothing[0]
     return float(smoothing[0]), float(smoothing[1])
 
 
@@ -357,7 +357,6 @@ def is_from_this_module(base):
     return (isinstance(base, _BootstrappedClassifierBase) or
             isinstance(base, _LinUCB_n_TS_single) or
             isinstance(base, _LogisticUCB_n_TS_single) or
-            isinstance(base, _BayesianLogisticRegression) or
             isinstance(base, _TreeUCB_n_TS_single))
 
 def _apply_softmax(x):
@@ -965,79 +964,6 @@ class _OneVsRest:
         for model in self.algos:
             if is_from_this_module(model):
                 setattr(model, attr_name, attr_value)
-
-
-class _BayesianLogisticRegression:
-    def __init__(self, method='advi', niter=2000, nsamples=50,
-                 mode='ucb', perc=None, random_state=1):
-        #TODO: reimplement with something faster than using PyMC3's black-box methods
-        self.nsamples = nsamples
-        self.niter = niter
-        self.mode = mode
-        self.perc = perc
-        self.method = method
-        self.random_state = _check_random_state(random_state)
-
-    def fit(self, X, y):
-        try:
-            import pymc3 as pm
-        except:
-            msg  = "This method requires PyCM3. "
-            msg += "Can be installed with e.g. 'pip install pymc3'."
-            raise ValueError(msg)
-        import pandas as pd
-        import logging
-        logger = logging.getLogger("pymc3")
-        logger.propagate = False
-        with pm.Model():
-            pm.glm.linear.GLM(X, y, family = 'binomial')
-            if self.method == 'advi':
-                trace = pm.fit(progressbar = False, n = self.niter,
-                               random_seed = self.random_state.integers(
-                                                np.iinfo(np.int32).max + 1
-                                            ))
-            else:
-                trace = pm.sample(progressbar = False, draws = self.niter, tune = 500,
-                                  step = None if self.method == "nuts" else pm.Metropolis(),
-                                  random_seed = self.random_state.integers(
-                                                np.iinfo(np.int32).max + 1
-                                            ))
-        if self.method == 'advi':
-            self.coefs = [i for i in trace.sample(self.nsamples)]
-            self.coefs = pd.DataFrame.from_dict(self.coefs)
-        else:
-            samples_chosen = self.random_state.choice(len(trace),
-                                                      size = self.nsamples,
-                                                      replace = False)
-            self.coefs = [i for i in trace]
-            self.coefs = pd.DataFrame.from_dict(self.coefs)
-            self.coefs = self.coefs.iloc[samples_chosen]
-        self.coefs = self.coefs[ ['Intercept'] + ['x' + str(i) for i in range(X.shape[1])] ]
-        self.intercept = self.coefs['Intercept'].values.reshape((1, -1)).copy()
-        del self.coefs['Intercept']
-        self.coefs = self.coefs.to_numpy().T
-
-    ### TODO: implement 'partial_fit' with stochastic variational inference
-
-    def _predict_all(self, X):
-        pred_all = X.dot(self.coefs) + self.intercept
-        _apply_sigmoid(pred_all)
-        return pred_all
-
-    def predict(self, X, exploit = False):
-        pred = self._predict_all(X)
-        if exploit:
-            return pred.mean(axis = 1)
-        elif self.mode == 'ucb':
-            pred = np.percentile(pred, self.perc, axis=1)
-        elif self.mode == 'ts':
-            pred = pred[:, self.random_state.integers(pred.shape[1])]
-        else:
-            raise ValueError(_unexpected_err_msg)
-        return pred
-
-    def exploit(self, X):
-        return self.predict(X, exploit = True)
 
 class _LinUCB_n_TS_single:
     def __init__(self, alpha=1.0, lambda_=1.0, fit_intercept=True,
