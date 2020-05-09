@@ -123,10 +123,11 @@ void topN_softmax_cpp
         nthreads = 1;
     #endif
 
+    long row;
     std::default_random_engine rng_glob(seed);
-    std::vector<std::default_random_engine> rng_thread(nthreads);
-    for (int tid = 0; tid < nthreads; tid++)
-        rng_thread[tid] = std::default_random_engine(
+    std::vector<std::default_random_engine> rng_row(nrow);
+    for (int row = 0; row < nrow; row++)
+        rng_row[row] = std::default_random_engine(
             std::uniform_int_distribution<unsigned long>(0, ULONG_MAX)(rng_glob)
             );
 
@@ -134,16 +135,15 @@ void topN_softmax_cpp
     std::vector<double> buffer_arr_thread((long)nthreads * pow2(tree_levels + 1));
 
     int tid;
-    long row;
     #pragma omp parallel for schedule(static) num_threads(nthreads) \
-            shared(scores, outp, nrow, ncol, n, rng_thread, buffer_arr_thread, tree_levels) \
+            shared(scores, outp, nrow, ncol, n, rng_row, buffer_arr_thread, tree_levels) \
             private(tid)
     for (row = 0; row < nrow; row++)
     {
         tid = omp_get_thread_num();
         weighted_partial_shuffle(
             outp + row*n, nrow, n, scores + row*ncol,
-            rng_thread[tid],
+            rng_row[row],
             buffer_arr_thread.data() + (long)tid*pow2(tree_levels + 1),
             tree_levels
         );
