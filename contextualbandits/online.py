@@ -1615,7 +1615,7 @@ class AdaptiveGreedy(_ActivePolicy):
         threshold : float or "auto"
             New threshold to use. If passing "auto", will set it
             to 1.5/nchoices. Note that this threshold will still be
-            decayed if the object was initialized with ``decay_type="threshold"`,
+            decayed if the object was initialized with ``decay_type="threshold"``,
             and will still be updated if initialized with ``percentile != None``.
 
         Returns
