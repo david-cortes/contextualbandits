@@ -36,11 +36,12 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
     start_point_online : either str 'random' or int in [0, n_samples-1]
         Point at which to start evaluating cases in the sample.
         Only used when passing online=True.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is only used when
-        passing ``start_point_online='random'``.
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        This is only used when passing ``start_point_online='random'``.
     update_freq : int
         After how many rounds to refit the policy being evaluated.
         Only used when passing ``online=True``.
@@ -180,9 +181,10 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     pmin : None or float
         Scores (from the exploration policy) will be converted to the minimum between
         pmin and the original estimate.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
 
     Returns
@@ -266,11 +268,13 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
         Be awarethat data is shuffled in-place.
     update_freq : int
         Batch size - how many observations to predict before refitting the model.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is used when shuffling
-        and when selecting actions at random for first batch.
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        This is used when shuffling and when selecting actions at random for
+        the first batch.
     
     Returns
     -------
