@@ -77,11 +77,12 @@ class DoublyRobustEstimator:
         Whether to use Regression One-Vs-Rest or Weighted All-Pairs (see Note 1)
     handle_invalid : bool
         Whether to replace 0/1 estimated rewards with randomly-generated numbers (see Note 2)
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is used when passing
-        ``handle_invalid=True`` or ``beta_prior != None``.
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        This is used when passing ``handle_invalid=True`` or ``beta_prior != None``.
     c : None or float
         Constant by which to multiply all scores from the exploration policy.
     pmin : None or float
@@ -262,11 +263,12 @@ class OffsetTree:
     pmin : None or float
         Scores (from the exploration policy) will be converted to the minimum between
         pmin and the original estimate.
-    random_state : int, None, or RandomState
+    random_state : int, None, RandomState, or Generator
         Either an integer which will be used as seed for initializing a
-        ``RandomState`` object for random number generation, or a ``RandomState``
-        object (from NumPy), which will be used directly. This is used when
-        predictions need to be done for an arm with no data.
+        ``Generator`` object for random number generation, a ``RandomState``
+        object (from NumPy) from which to draw an integer, or a ``Generator``
+        object (from NumPy), which will be used directly.
+        This is used when predictions need to be done for an arm with no data.
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores. Note that if the base algorithm is itself parallelized,
