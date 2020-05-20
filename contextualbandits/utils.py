@@ -1077,7 +1077,10 @@ class _LogisticUCB_n_TS_single:
         ### Thompson sampling, from CI
         if (self.ts) and (self.ts_from_ci) and (not exploit):
             if not self.is_fitted:
-                ci = np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+                if not issparse(X):
+                    ci = np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+                else:
+                    ci = np.sqrt(X.multiply(X).sum(axis=1) / self.lambda_)
                 return self.random_state.normal(size=X.shape[0]) * ci
             pred = self.model.decision_function(X)
             X, Xcsr = self._process_X(X)
@@ -1125,7 +1128,11 @@ class _LogisticUCB_n_TS_single:
 
         ### UCB
         if not self.is_fitted:
-            pred = self.conf_coef * np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
+            if not issparse(X):
+                se_sq = np.einsum("ij,ij->i", X, X)
+            else:
+                se_sq = X.multiply(X).sum(axis=1)
+            pred = self.conf_coef * np.sqrt(se_sq / self.lambda_)
             pred[:] += self.random_state.uniform(low=0., high=1e-12, size=pred.shape[0])
             _apply_sigmoid(pred)
             return pred
