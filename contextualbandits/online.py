@@ -1442,9 +1442,9 @@ class AdaptiveGreedy(_ActivePolicy):
         Whether to decay the threshold itself or the percentile of the predictions to take after
         each prediction. Ignored when using 'decay=None'. If passing 'percentile=None' and 'decay_type=percentile',
         will be forced to 'threshold'.
-    initial_thr : str 'autho' or float (0,1)
+    initial_thr : str 'auto' or float (0,1)
         Initial threshold for the prediction below which a random action is taken.
-        If set to 'auto', will be calculated as initial_thr = 1.5/nchoices.
+        If set to 'auto', will be calculated as initial_thr = 1 / (2 * sqrt(nchoices)).
         Note that if 'base_algorithm' has a 'decision_function' method, it will first apply a sigmoid function to the
         output, and then compare it to the threshold, so the threshold should lie between zero and one.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
