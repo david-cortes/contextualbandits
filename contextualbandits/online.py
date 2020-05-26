@@ -500,11 +500,11 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     percentile : int [0,100]
         Percentile of the predictions sample to take
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((3/log2(nchoices), 4), 2)
         Note that it will only generate one random number per arm, so the 'a'
         parameter should be higher than for other methods.
         This parameter can have a very large impact in the end results, and it's
@@ -658,11 +658,11 @@ class BootstrappedTS(_BasePolicyWithExploit):
     nsamples : int
         Number of bootstrapped samples per class to take.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -820,11 +820,11 @@ class LogisticUCB(_BasePolicyWithExploit):
         Instead, it's recommended to use ``beta_prior``, which acts in the same way
         as for the other policies in this library.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((3/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -968,11 +968,11 @@ class LogisticTS(_BasePolicyWithExploit):
         without much of a performance penalty.
         Ignored when passing ``sample_from='ci'``.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -1056,11 +1056,11 @@ class SeparateClassifiers(_BasePolicy):
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -1239,11 +1239,11 @@ class EpsilonGreedy(_BasePolicy):
         After each prediction, the explore probability reduces to
         p = p*decay
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         The impact of ``beta_prior`` for ``EpsilonGreedy`` is not as high as for other
         policies in this module.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -1563,11 +1563,11 @@ class AdaptiveGreedy(_ActivePolicy):
         Note that if 'base_algorithm' has a 'decision_function' method, it will first apply a sigmoid function to the
         output, and then compare it to the threshold, so the threshold should lie between zero and one.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/nchoices, 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((3/nchoices, 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -1974,11 +1974,11 @@ class ExploreFirst(_ActivePolicy):
         results.
         Ignored when passing ``prob_active_choice=0.``
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -2248,11 +2248,11 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         After each prediction, the probability of selecting an arm according to active
         learning criteria is set to p = p*decay
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2410,11 +2410,11 @@ class SoftmaxExplorer(_BasePolicy):
         Number by which to multiply the multipier rate after every prediction, i.e. after making
         't' predictions, the multiplier will be 'multiplier_t = multiplier * inflation_rate^t'.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2691,11 +2691,11 @@ class LinUCB(_BasePolicyWithExploit):
         Instead, it's recommended to use ``beta_prior``, which acts in the same way
         as for the other policies in this library.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/log2(nchoices), 4), 2).
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((3/log2(nchoices), 4), 2).
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2868,11 +2868,11 @@ class LinTS(LinUCB):
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2976,11 +2976,11 @@ class ParametricTS(_BasePolicyWithExploit):
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((2/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -3128,11 +3128,11 @@ class PartitionedUCB(_BasePolicyWithExploit):
         the number of negatives. If passing ``beta_prior=None``, will use these alone
         to generate an upper confidence bound and will break ties at random.
     beta_prior : str 'auto', None, or tuple ((a,b), n)
-        If not None, when there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
-        for that class as a random number drawn from a beta distribution with the prior
-        specified by 'a' and 'b'. If set to auto, will be calculated as:
-        beta_prior = ((3/log2(nchoices), 4), 2)
+        If not 'None', when there are less than 'n' samples with and without
+        a reward from a given arm, it will predict the score for that class as a
+        random number drawn from a beta distribution with the prior
+        specified by 'a' and 'b'. If set to "auto", will be calculated as:
+            beta_prior = ((3/log2(nchoices), 4), 2)
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -3274,12 +3274,13 @@ class PartitionedTS(_BasePolicyWithExploit):
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
     beta_prior : str 'auto', or tuple ((a,b), n)
-        When there are less than 'n' positive samples from a class
-        (actions from that arm that resulted in a reward), it will predict the score
+        When there are less than 'n' samples with and without a reward from
+        a given arm, it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'.
         If passing 'auto' (which is *not* the default), will use the same default as for
-        the other policies in this library: beta_prior = ((2/log2(nchoices), 4), 2)
+        the other policies in this library:
+            beta_prior = ((2/log2(nchoices), 4), 2)
         Additionally, will use (a,b) as prior when sampling from the MAB at a given node.
     smoothing : None or tuple (a,b)
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
