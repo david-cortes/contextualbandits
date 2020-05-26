@@ -463,10 +463,19 @@ def update_matrices_noinv(
             XtX[n,n] = 0
 
         if w.shape[0] == 0:
-            Xsum = X.sum(axis=0)
+            if Xcsr is None:
+                Xsum = X.sum(axis=0)
+            else:
+                Xsum = np.array(Xcsr.sum(axis=0)).reshape(-1)
             XtX[n,n] += <realtp>m
         else:
-            Xsum = np.einsum("ij,i->j", X, w)
+            if Xcsr is None:
+                Xsum = np.einsum("ij,i->j", X, w)
+            else:
+                Xsum = np.array(Xcsr
+                                .multiply(w.reshape((-1,1)))
+                                .sum(axis=1))\
+                                .reshape(-1)
             XtX[n,n] += <realtp> (w.sum())
         if overwrite:
             tcopy(&n, &Xsum[0], &one_int, &XtX[0,n], &n_plusb)

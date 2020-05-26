@@ -5,6 +5,9 @@ from .utils import _check_fit_input, _check_1d_inp, \
         _check_X_input, _check_random_state
 from .online import SeparateClassifiers
 
+__all__ = ["evaluateRejectionSampling", "evaluateDoublyRobust",
+           "evaluateFullyLabeled", "evaluateNCIS"]
+
 def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                               start_point_online='random', random_state=1,
                               update_freq=10):

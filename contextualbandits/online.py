@@ -7,12 +7,19 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
             _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
-            _check_active_inp, \
-            _check_autograd_supported, _get_logistic_grads_norms, _gen_random_grad_norms, \
+            _check_autograd_supported, _get_logistic_grads_norms, \
+            _gen_random_grad_norms, _gen_zero_norms, \
             _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
+
+__all__ = ["BootstrappedUCB", "BootstrappedTS",
+           "LogisticUCB", "LogisticTS",
+           "SeparateClassifiers", "EpsilonGreedy", "AdaptiveGreedy",
+           "ExploreFirst", "ActiveExplorer", "SoftmaxExplorer",
+           "LinUCB", "LinTS", "ParametricTS",
+           "PartitionedUCB", "PartitionedTS"]
 
 class _BasePolicy:
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, noise_to_smooth,
@@ -77,8 +84,18 @@ class _BasePolicy:
         self.batch_sample_method = batch_sample_method
         self.nsamples = nsamples
         self.njobs_samples = _check_njobs(njobs_samples)
+        if not isinstance(base_algorithm, list):
+            self.base_algorithm = self._make_bootstrapped(base_algorithm, percentile,
+                                                          ts_byrow, ts_weighted)
+        else:
+            self.base_algorithm = [ \
+                self._make_bootstrapped(alg, percentile, ts_byrow, ts_weighted) \
+                for alg in base_algorithm]
+
+    def _make_bootstrapped(self, base_algorithm, percentile,
+                           ts_byrow, ts_weighted):
         if "predict_proba" in dir(base_algorithm):
-            self.base_algorithm = _BootstrappedClassifier_w_predict_proba(
+            return _BootstrappedClassifier_w_predict_proba(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
                 random_state = 1, ### gets changed later
@@ -87,7 +104,7 @@ class _BasePolicy:
                 ts_weighted = ts_weighted
                 )
         elif "decision_function" in dir(base_algorithm):
-            self.base_algorithm = _BootstrappedClassifier_w_decision_function(
+            return _BootstrappedClassifier_w_decision_function(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
                 random_state = 1, ### gets changed later
@@ -96,7 +113,7 @@ class _BasePolicy:
                 ts_weighted = ts_weighted
                 )
         else:
-            self.base_algorithm = _BootstrappedClassifier_w_predict(
+            return _BootstrappedClassifier_w_predict(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
                 random_state = 1, ### gets changed later
@@ -109,6 +126,8 @@ class _BasePolicy:
         if self.choice_names is None:
             return pred
         else:
+            if not np.issubdtype(pred.dtype, np.integer):
+                pred = pred.astype(int)
             return self.choice_names[pred]
 
     def drop_arm(self, arm_name):
@@ -149,9 +168,9 @@ class _BasePolicy:
         else:
             if self.choice_names is None:
                 raise ValueError("If arms are not named, must pass an integer value.")
-            for ch in range(self.nchoices):
-                if self.choice_names[ch] == arm_name:
-                    drop_ix = ch
+            for choice in range(self.nchoices):
+                if self.choice_names[choice] == arm_name:
+                    drop_ix = choice
                     break
             else:
                 raise ValueError("No arm named '", str(arm_name), "' - current names are stored in attribute 'choice_names'.")
@@ -162,12 +181,18 @@ class _BasePolicy:
             self.choice_names = np.arange(self.nchoices)
         self.nchoices -= 1
         self.choice_names = np.r_[self.choice_names[:drop_ix], self.choice_names[drop_ix + 1:]]
+        if isinstance(self, _ActivePolicy):
+            if isinstance(self._get_grad_norms, list):
+                self._get_grad_norms[:drop_ix] + self._get_grad_norms[drop_ix + 1:]
+            if isinstance(self._rand_grad_norms, list):
+                self._rand_grad_norms[:drop_ix] + self._rand_grad_norms[drop_ix + 1:]
 
     ## TODO: maybe add functionality to take an arm from another object of this class
 
     def add_arm(self, arm_name = None, fitted_classifier = None,
                 n_w_rew = 0, n_wo_rew = 0,
-                refit_buffer_X = None, refit_buffer_r = None):
+                refit_buffer_X = None, refit_buffer_r = None,
+                f_grad_norm = None, case_one_class = None):
         """
         Adds a new arm to the pool of choices
 
@@ -191,6 +216,16 @@ class _BasePolicy:
         refit_buffer_r : array(m,) or None
             Refit buffer of rewards data to use for the new arm. Ignored when using
             'batch_train=False' or 'refit_buffer=None'.
+        f_grad_norm : function
+            Gradient calculation function to use for this arm. This is only
+            for the policies that make choices according to active learning
+            criteria, and only for situations in which the policy was passed
+            different functions for each arm.
+        case_one_class : function
+            Gradient workaround function for single-class data. This is only
+            for the policies that make choices according to active learning
+            criteria, and only for situations in which the policy was passed
+            different functions for each arm.
 
         Returns
         -------
@@ -206,9 +241,17 @@ class _BasePolicy:
         refit_buffer_X, refit_buffer_r = \
             _check_refit_inp(refit_buffer_X, refit_buffer_r, self.refit_buffer)
         arm_name = self._check_new_arm_name(arm_name)
+        if isinstance(self, _ActivePolicy):
+            if isinstance(self._get_grad_norms, list):
+                if not callable(f_grad_norm):
+                    raise ValueError("'f_grad_norm' must be a function.")
+            if isinstance(self._rand_grad_norms, list):
+                if not callable(case_one_class):
+                    raise ValueError("'case_one_class' must be a function.")
+
         self._oracles._spawn_arm(fitted_classifier, n_w_rew, n_wo_rew,
                                  refit_buffer_X, refit_buffer_r)
-        self._append_arm(arm_name)
+        self._append_arm(arm_name, f_grad_norm, case_one_class)
         return self
 
     def _check_new_arm_name(self, arm_name):
@@ -221,9 +264,13 @@ class _BasePolicy:
                 raise ValueError("Must provide an arm name when using named arms.")
         return arm_name
 
-    def _append_arm(self, arm_name):
+    def _append_arm(self, arm_name, f_grad_norm, case_one_class):
         if self.choice_names is not None:
-            self.choice_names = np.r_[self.choice_names, np.array(arm_name).reshape((1,))]
+            self.choice_names = np.r_[self.choice_names, np.array(arm_name).reshape(-1)]
+        if f_grad_norm is not None:
+            self._get_grad_norms.append(f_grad_norm)
+        if case_one_class is not None:
+            self._rand_grad_norms.append(case_one_class)
         self.nchoices += 1
 
     def fit(self, X, a, r, warm_start=False):
@@ -232,11 +279,11 @@ class _BasePolicy:
 
         Parameters
         ----------
-        X : array (n_samples, n_features)
+        X : array(n_samples, n_features) or CSR(n_samples, n_features)
             Matrix of covariates for the available data.
-        a : array (n_samples), int type
+        a : array(n_samples, ), int type
             Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
+        r : array(n_samples, ), {0,1}
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
         warm_start : bool
             Whether to use the results of previous calls to 'fit' as a start
@@ -289,11 +336,11 @@ class _BasePolicy:
 
         Parameters
         ----------
-        X : array (n_samples, n_features)
+        X : array(n_samples, n_features) or CSR(n_samples, n_features)
             Matrix of covariates for the available data.
-        a : array (n_samples), int type
+        a : array(n_samples, ), int type
             Arms or actions that were chosen for each observations.
-        r : array (n_samples), {0,1}
+        r : array(n_samples, ), {0,1}
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
 
         Returns
@@ -493,6 +540,9 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -658,6 +708,9 @@ class BootstrappedTS(_BasePolicyWithExploit):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -1041,6 +1094,9 @@ class SeparateClassifiers(_BasePolicy):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -1217,6 +1273,9 @@ class EpsilonGreedy(_BasePolicy):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -1342,23 +1401,79 @@ class EpsilonGreedy(_BasePolicy):
 
 
 class _ActivePolicy(_BasePolicy):
+    def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
+        if f_grad_norm == 'auto':
+            if not isinstance(base_algorithm, list):
+                _check_autograd_supported(base_algorithm)
+            else:
+                for alg in base_algorithm:
+                    _check_autograd_supported(alg)
+            self._get_grad_norms = _get_logistic_grads_norms
+        else:
+            if not isinstance(f_grad_norm, list):
+                assert callable(f_grad_norm)
+            else:
+                if len(f_grad_norm) != self.nchoices:
+                    raise ValueError("'f_grad_norm' must have 'nchoices' entries.")
+                for fun in f_grad_norm:
+                    if not callable(f_grad_norm):
+                        raise ValueError("If passing a list for 'f_grad_norm', " +
+                                         "entries must be functions")
+            self._get_grad_norms = f_grad_norm
+
+        if case_one_class == 'auto':
+            self._force_fit = False
+            self._rand_grad_norms = _gen_random_grad_norms
+        elif case_one_class == 'zero':
+            self._force_fit = False
+            self._rand_grad_norms = _gen_zero_norms
+        elif case_one_class is None:
+            self._force_fit = True
+            self._rand_grad_norms = None
+        else:
+            if not isinstance(case_one_class, list):
+                assert callable(case_one_class)
+            else:
+                if len(case_one_class) != self.nchoices:
+                    raise ValueError("'case_one_class' must have 'nchoices' entries.")
+                for fun in case_one_class:
+                    if not callable(case_one_class):
+                        raise ValueError("If passing a list for 'case_one_class', " +
+                                         "entries must be functions")
+            self._force_fit = False
+            self._rand_grad_norms = case_one_class
+        self.case_one_class = case_one_class
+        self._force_counters = True
+
     ### TODO: parallelize this in cython for the default case
     def _crit_active(self, X, pred, grad_crit):
+        change_f_grad = isinstance(self._get_grad_norms, list)
+        change_r_grad = isinstance(self._rand_grad_norms, list)
+        f_grad = self._get_grad_norms
+        r_grad = self._rand_grad_norms
         for choice in range(self.nchoices):
+            if change_f_grad:
+                f_grad = self._get_grad_norms[choice]
+            if change_r_grad:
+                r_grad = self._rand_grad_norms[choice]
+
             if self._oracles.should_calculate_grad(choice) or self._force_fit:
-                if (self._get_grad_norms == _get_logistic_grads_norms) and ("coef_" not in dir(self._oracles.algos[choice])):
+                if ( (self._get_grad_norms == _get_logistic_grads_norms)
+                      and ("coef_" not in dir(self._oracles.algos[choice]))
+                    ):
                     grad_norms = \
-                        self._rand_grad_norms(X,
-                                              self._oracles.get_n_pos(choice),
-                                              self._oracles.get_n_neg(choice),
-                                              self._oracles.rng_arm[choice])
+                        r_grad(X,
+                               self._oracles.get_n_pos(choice),
+                               self._oracles.get_n_neg(choice),
+                               self._oracles.rng_arm[choice])
                 else:
-                    grad_norms = self._get_grad_norms(self._oracles.algos[choice], X, pred[:, choice])
+                    grad_norms = f_grad(self._oracles.algos[choice],
+                                        X, pred[:, choice])
             else:
-                grad_norms = self._rand_grad_norms(X,
-                                                   self._oracles.get_n_pos(choice),
-                                                   self._oracles.get_n_neg(choice),
-                                                   self._oracles.rng_arm[choice])
+                grad_norms = r_grad(X,
+                                    self._oracles.get_n_pos(choice),
+                                    self._oracles.get_n_neg(choice),
+                                    self._oracles.rng_arm[choice])
 
             if grad_crit == 'min':
                 pred[:, choice] = grad_norms.min(axis = 1)
@@ -1489,6 +1604,9 @@ class AdaptiveGreedy(_ActivePolicy):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -1508,13 +1626,15 @@ class AdaptiveGreedy(_ActivePolicy):
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
         Non-random active selection requires being able to calculate gradients (gradients for logistic regression and linear regression (from this package)
         are already defined with an option 'auto' below).
-    f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+    f_grad_norm : str 'auto', list, or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
+        Can also use different functions for each arm, in which case it
+        accepts them as a list of functions with length equal to ``nchoices``.
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier', and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, list, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
             * If passing 'None', will assume that ``base_algorithm`` can be fit to
@@ -1531,6 +1651,8 @@ class AdaptiveGreedy(_ActivePolicy):
               inputs to this function are the number of positive and negative examples
               that have been observed, and a ``Generator`` object from NumPy to use
               for generating random numbers.
+            * If passing a list, will assume each entry is a function as described
+              above, to be used with each corresponding arm.
             * If passing 'auto', will generate random numbers:
 
                 * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
@@ -1582,7 +1704,10 @@ class AdaptiveGreedy(_ActivePolicy):
             assert isinstance(percentile, int)
             assert (percentile > 0) and (percentile < 100)
         if initial_thr == 'auto':
-            initial_thr = 1.0 / (np.sqrt(nchoices) * 2.0)
+            if not isinstance(nchoices, list):
+                initial_thr = 1.0 / (np.sqrt(nchoices) * 2.0)
+            else:
+                initial_thr = 1.0 / (np.sqrt(len(nchoices)) * 2.0)
         assert isinstance(initial_thr, float)
         assert window_size > 0
         self.window_size = window_size
@@ -1602,8 +1727,7 @@ class AdaptiveGreedy(_ActivePolicy):
 
         if active_choice is not None:
             assert active_choice in ['min', 'max', 'weighted']
-            _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
-            self._force_counters = True
+            self._check_active_inp(base_algorithm, f_grad_norm, case_one_class)
         self.active_choice = active_choice
 
     def reset_threshold(self, threshold="auto"):
@@ -1812,6 +1936,8 @@ class ExploreFirst(_ActivePolicy):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
+        Can also use different functions for each arm, in which case it
+        accepts them as a list of functions with length equal to ``nchoices``.
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
@@ -1833,6 +1959,8 @@ class ExploreFirst(_ActivePolicy):
               inputs to this function are the number of positive and negative examples
               that have been observed, and a ``Generator`` object from NumPy to use
               for generating random numbers.
+            * If passing a list, will assume each entry is a function as described
+              above, to be used with each corresponding arm.
             * If passing 'auto', will generate random numbers:
 
                 * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
@@ -1878,6 +2006,9 @@ class ExploreFirst(_ActivePolicy):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -1933,8 +2064,7 @@ class ExploreFirst(_ActivePolicy):
         if self.prob_active_choice > 0:
             assert active_choice in ['min', 'max', 'weighted']
             self.active_choice = active_choice
-            _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
-            self._force_counters = True
+            self._check_active_inp(base_algorithm, f_grad_norm, case_one_class)
         else:
             self.active_choice = None
 
@@ -2072,6 +2202,8 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
     f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
+        Can also use different functions for each arm, in which case it
+        accepts them as a list of functions with length equal to ``nchoices``.
         The option 'auto' will only work with scikit-learn's 'LogisticRegression', 'SGDClassifier' (log-loss only), and 'RidgeClassifier';
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
@@ -2092,6 +2224,8 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
               inputs to this function are the number of positive and negative examples
               that have been observed, and a ``Generator`` object from NumPy to use
               for generating random numbers.
+            * If passing a list, will assume each entry is a function as described
+              above, to be used with each corresponding arm.
             * If passing 'auto', will generate random numbers:
 
                 * negative: ~ Gamma(log10(n_features) / (n_pos+1)/(n_pos+n_neg+2), log10(n_features)).
@@ -2150,6 +2284,9 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -2193,7 +2330,7 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
                  assume_unique_reward=False, random_state=None, njobs=-1):
         assert active_choice in ['min', 'max', 'weighted']
         self.active_choice = active_choice
-        _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class)
+        self._check_active_inp(base_algorithm, f_grad_norm, case_one_class)
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
@@ -2201,7 +2338,6 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         assert (explore_prob > 0.) and (explore_prob <= 1.)
         self.explore_prob = explore_prob
         self.decay = decay
-        self._force_counters = True
 
     def reset_explore_prob(self, explore_prob=0.2):
         """
@@ -2312,6 +2448,9 @@ class SoftmaxExplorer(_BasePolicy):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool
@@ -2879,6 +3018,9 @@ class ParametricTS(_BasePolicyWithExploit):
         will be gradually replaced with the new ones (at random, not on a FIFO
         basis). This technique can greatly enchance the performance when fitting
         the data in batches, but memory consumption can grow quite large.
+        If passing sparse CSR matrices as input to 'fit' and 'partial_fit',
+        these will be converted to dense once they go into this reserve, and
+        then converted back to CSR to augment the new data.
         Calls to 'fit' will override this reserve.
         Ignored when passing 'batch_train=False'.
     deep_copy_buffer : bool

@@ -4,7 +4,7 @@ from joblib import Parallel, delayed
 import pandas as pd
 import ctypes
 from scipy.stats import norm as norm_dist
-from scipy.sparse import issparse, isspmatrix_csr, csr_matrix
+from scipy.sparse import issparse, isspmatrix_csr, csr_matrix, vstack as sp_vstack
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from .linreg import LinearRegression, _wrapper_double
@@ -96,10 +96,23 @@ def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
     if isinstance(base_algorithm, list):
         if len(base_algorithm) != nchoices:
             raise ValueError("Number of classifiers does not match with number of choices.")
-        ### For speed reasons, here it will not test if each classifier has the right methods
+        for alg in base_algorithm:
+            if not ('fit' in dir(alg)):
+                raise ValueError("Base algorithms must have a 'fit' method.")
+            if not (('predict_proba' in dir(alg))
+                    or ('decision_function' in dir(alg))
+                    or ('predict' in dir(alg))):
+                raise ValueError("Base algorithms must have at least one of " +
+                                 "'predict_proba', 'decision_function', 'predict'.")
+            if batch_train:
+                if not ('partial_fit' in dir(alg)):
+                    raise ValueError("Using 'batch_train' requires base " +
+                                     "algorithms with 'partial_fit' method.")
     else:
         assert ('fit' in dir(base_algorithm))
-        assert ('predict_proba' in dir(base_algorithm)) or ('decision_function' in dir(base_algorithm)) or ('predict' in dir(base_algorithm))
+        assert (('predict_proba' in dir(base_algorithm))
+                or ('decision_function' in dir(base_algorithm))
+                or ('predict' in dir(base_algorithm)))
         if batch_train:
             assert 'partial_fit' in dir(base_algorithm)
 
@@ -161,8 +174,8 @@ def _check_X_input(X):
     if isinstance(X, np.matrixlib.defmatrix.matrix):
         warnings.warn("'defmatrix' will be cast to array.")
         X = np.array(X)
-    if not isinstance(X, np.ndarray):
-        raise ValueError("'X' must be a numpy array or pandas data frame.")
+    if not isinstance(X, np.ndarray) and not isspmatrix_csr(X):
+        raise ValueError("'X' must be a numpy array or sparse CSR matrix.")
     if len(X.shape) == 1:
         X = X.reshape((1, -1))
     assert len(X.shape) == 2
@@ -203,30 +216,6 @@ def _check_bay_inp(method, n_iter, n_samples):
 
     return n_iter, n_samples
 
-def _check_active_inp(self, base_algorithm, f_grad_norm, case_one_class):
-    if f_grad_norm == 'auto':
-        _check_autograd_supported(base_algorithm)
-        self._get_grad_norms = _get_logistic_grads_norms
-    else:
-        assert callable(f_grad_norm)
-        self._get_grad_norms = f_grad_norm
-
-    if case_one_class == 'auto':
-        self._force_fit = False
-        self._rand_grad_norms = _gen_random_grad_norms
-    elif case_one_class == 'zero':
-        self._force_fit = False
-        self._rand_grad_norms = _gen_zero_norms
-    elif case_one_class is None:
-        self._force_fit = True
-        self._rand_grad_norms = None
-    else:
-        assert callable(case_one_class)
-        self._force_fit = False
-        self._rand_grad_norms = case_one_class
-    self.case_one_class = case_one_class
-    self._force_counters = True
-
 def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
     if (refit_buffer_X is not None) or (refit_buffer_y is not None):
         if not refit_buffer:
@@ -245,26 +234,6 @@ def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
             refit_buffer_r = None
     return refit_buffer_X, refit_buffer_r
 
-def _extract_regularization(base_algorithm):
-    if base_algorithm.__class__.__name__ == 'LogisticRegression':
-        return 1.0 / base_algorithm.C
-    elif base_algorithm.__class__.__name__ == 'SGDClassifier':
-        return base_algorithm.alpha
-    elif base_algorithm.__class__.__name__ == 'RidgeClassifier':
-        return base_algorithm.alpha
-    elif base_algorithm.__class__.__name__ == 'StochasticLogisticRegression':
-        return base_algorithm.reg_param
-    elif base_algorithm.__class__.__name__ == "LinearRegression":
-        if not ("lambda_" in dir(base_algorithm)):
-            return 0.
-        return base_algorithm.lambda_
-    else:
-        msg  = "'auto' option only available for "
-        msg += "'LogisticRegression', 'SGDClassifier', 'RidgeClassifier', "
-        msg += "'StochasticLogisticRegression' (stochQN's), "
-        msg += "and 'LinearRegression' (this package's only)."
-        raise ValueError(msg)
-
 def _logistic_grad_norm(X, y, pred, base_algorithm):
     coef = base_algorithm.coef_.reshape(-1)[:X.shape[1]]
     err = pred - y
@@ -273,7 +242,7 @@ def _logistic_grad_norm(X, y, pred, base_algorithm):
         if not isspmatrix_csr(X):
             warnings.warn("Sparse matrix will be cast to CSR format.")
             X = csr_matrix(X)
-        grad_norm = X.multiply(err)
+        grad_norm = X.multiply(err.reshape((-1, 1)))
     else:
         grad_norm = X * err.reshape((-1, 1))
 
@@ -282,7 +251,10 @@ def _logistic_grad_norm(X, y, pred, base_algorithm):
     ### data points, or whether there is regularization or not.
 
     ## coefficients
-    grad_norm = np.einsum("ij,ij->i", grad_norm, grad_norm)
+    if not issparse(grad_norm):
+        grad_norm = np.einsum("ij,ij->i", grad_norm, grad_norm)
+    else:
+        grad_norm = np.array(grad_norm.multiply(grad_norm).sum(axis=1)).reshape(-1)
 
     ## intercept
     if base_algorithm.fit_intercept:
@@ -345,8 +317,9 @@ def _apply_sigmoid(x):
     return None
 
 def _apply_inverse_sigmoid(x):
-    x[x <= 0] = 1e-8
-    x[x >= 1] = 1. - 1e-8
+    lim = 1e-10
+    x[x <= lim     ] = lim
+    x[x >= (1.-lim)] = 1. - lim
     if (len(x.shape) == 2):
         x[:, :] = np.log(x / (1.0 - x))
     else:
@@ -362,7 +335,7 @@ def is_from_this_module(base):
 def _apply_softmax(x):
     x[:, :] = np.exp(x - x.max(axis=1).reshape((-1, 1)))
     x[:, :] = x / x.sum(axis=1).reshape((-1, 1))
-    x[x > 1] = 1.
+    x[x > 1.] = 1.
     return None
 
 class _FixedPredictor:
@@ -571,6 +544,7 @@ class _RefitBuffer:
         self.y_reserve = list()
         self.dim = 0
         self.random_state = _check_random_state(random_state)
+        self.has_sparse = False
 
     def add_obs(self, X, y):
         if X.shape[0] == 0:
@@ -589,24 +563,40 @@ class _RefitBuffer:
             if isinstance(self.X_reserve, list):
                 self.X_reserve.append(X)
                 self.y_reserve.append(y)
+                if issparse(X):
+                    self.has_sparse = True
                 self.curr += n_new
                 if self.curr == self.n:
-                    self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+                    if not self.has_sparse:
+                        self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+                    else:
+                        self.X_reserve = np.array(sp_vstack(self.X_reserve).todense())
+                        self.has_sparse = False
                     self.y_reserve = np.concatenate(self.y_reserve, axis=0)
             else:
+                if issparse(X):
+                    X = np.array(X.todense())
                 self.X_reserve[self.curr : self.curr + n_new] = X[:]
                 self.y_reserve[self.curr : self.curr + n_new] = y[:]
                 self.curr += n_new
         elif isinstance(self.X_reserve, list):
             self.X_reserve.append(X)
             self.y_reserve.append(y)
-            self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+            if issparse(X):
+                self.has_sparse = True
+            if not self.has_sparse:
+                self.X_reserve = np.concatenate(self.X_reserve, axis=0)
+            else:
+                self.X_reserve = np.array(sp_vstack(self.X_reserve).todense())
+                self.has_sparse = False
             self.y_reserve = np.concatenate(self.y_reserve, axis=0)
             keep = self.random_state.choice(self.X_reserve.shape[0], size=self.n, replace=False)
             self.X_reserve = self.X_reserve[keep]
             self.y_reserve = self.y_reserve[keep]
             self.curr = self.n
         elif self.curr < self.n:
+            if issparse(X):
+                X = np.array(X.todense())
             if n_new == self.n:
                 self.X_reserve[:] = X[:]
                 self.y_reserve[:] = y[:]
@@ -621,6 +611,8 @@ class _RefitBuffer:
                 self.y_reserve = np.r_[self.y_reserve[old_ix], y[new_ix]]
             self.curr = self.n
         else: ### can only reach this point once reserve is full
+            if issparse(X):
+                X = np.array(X.todense())
             if n_new == self.n:
                 self.X_reserve[:] = X[:]
                 self.y_reserve[:] = y[:]
@@ -641,7 +633,10 @@ class _RefitBuffer:
             return X, y
 
         if (self.curr < self.n) and (isinstance(self.X_reserve, list)):
-            old_X = np.concatenate(self.X_reserve, axis=0)
+            if not self.has_sparse:
+                old_X = np.concatenate(self.X_reserve, axis=0)
+            else:
+                old_X = sp_vstack(self.X_reserve)
             old_y = np.concatenate(self.y_reserve, axis=0)
         else:
             old_X = self.X_reserve[:self.curr].copy()
@@ -652,7 +647,10 @@ class _RefitBuffer:
         else:
             self.add_obs(X, y)
 
-        return np.r_[old_X, X], np.r_[old_y, y]
+        if not issparse(old_X) and not issparse(X):
+            return np.r_[old_X, X], np.r_[old_y, y]
+        else:
+            return sp_vstack([old_X, X]), np.r_[old_y, y]
 
     def do_full_refit(self):
         return self.curr < self.n
@@ -713,13 +711,21 @@ class _OneVsRest:
         else:
             self.buffer = None
 
-        if 'predict_proba' not in dir(base):
-            base = _convert_decision_function_w_sigmoid(base)
-        if partialfit:
-            base = _add_method_predict_robust(base)
+        if not isinstance(base, list):
+            if 'predict_proba' not in dir(base):
+                base = _convert_decision_function_w_sigmoid(base)
+            if partialfit:
+                base = _add_method_predict_robust(base)
+        else:
+            for alg in range(len(base)):
+                if 'predict_proba' not in dir(base[alg]):
+                    base[alg] = _convert_decision_function_w_sigmoid(base[alg])
+                if partialfit:
+                    base[alg] = _add_method_predict_robust(base[alg])
+        
         if isinstance(base, list):
             self.base = None
-            self.algos = base
+            self.algos = [alg for alg in base]
         else:
             self.base = base
             if prev_ovr is not None:
@@ -886,7 +892,7 @@ class _OneVsRest:
 
         if 'predict_proba_robust' in dir(self.algos[choice]):
             preds[:, choice] = self.algos[choice].predict_proba_robust(X)[:, 1]
-        elif 'predict_proba' in dir(self.base):
+        elif 'predict_proba' in dir(self.algos[choice]):
             preds[:, choice] = self.algos[choice].predict_proba(X)[:, 1]
         else:
             if depth == 0:
@@ -1080,7 +1086,9 @@ class _LogisticUCB_n_TS_single:
                 if not issparse(X):
                     ci = np.sqrt(np.einsum("ij,ij->i", X, X) / self.lambda_)
                 else:
-                    ci = np.sqrt(X.multiply(X).sum(axis=1) / self.lambda_)
+                    ci = np.sqrt(
+                            np.array(X.multiply(X).sum(axis=1)).reshape(-1)
+                            / self.lambda_)
                 return self.random_state.normal(size=X.shape[0]) * ci
             pred = self.model.decision_function(X)
             X, Xcsr = self._process_X(X)
@@ -1114,13 +1122,18 @@ class _LogisticUCB_n_TS_single:
                 if not issparse(X):
                     pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
                 else:
-                    pred = X.multiply(coef[:,:X.shape[1]]).sum(axis=1)
+                    pred = np.array(X
+                                    .multiply(coef[:,:X.shape[1]])
+                                    .sum(axis=1))\
+                                    .reshape(-1)
                 if self.fit_intercept:
                     pred[:] += coef[:,-1]
             else:
                 coef = self.random_state.multivariate_normal(mean=coef,
                                                              cov=self.m * cov)
                 pred = X.dot(coef[:X.shape[1]])
+                if not isinstance(pred, np.ndarray):
+                    pred = np.array(pred).reshape(-1)
                 if self.fit_intercept:
                     pred[:] += coef[-1]
             _apply_sigmoid(pred)
@@ -1131,7 +1144,7 @@ class _LogisticUCB_n_TS_single:
             if not issparse(X):
                 se_sq = np.einsum("ij,ij->i", X, X)
             else:
-                se_sq = X.multiply(X).sum(axis=1)
+                se_sq = np.array(X.multiply(X).sum(axis=1)).reshape(-1)
             pred = self.conf_coef * np.sqrt(se_sq / self.lambda_)
             pred[:] += self.random_state.uniform(low=0., high=1e-12, size=pred.shape[0])
             _apply_sigmoid(pred)

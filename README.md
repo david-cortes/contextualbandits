@@ -68,6 +68,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
+* Can now work sparse matrices in CSR format.
 * Added functionality for ranking top-N arms instead of always picking the single best one.
 * Added tree-based partitioned UCB and TS.
 * Added new online method `ParametricTS`.

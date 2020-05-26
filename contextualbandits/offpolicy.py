@@ -8,6 +8,8 @@ from .online import SeparateClassifiers
 from copy import deepcopy
 from joblib import Parallel, delayed
 
+__all__ = ["DoublyRobustEstimator", "OffsetTree"]
+
 class DoublyRobustEstimator:
     """
     Doubly-Robust Estimator
