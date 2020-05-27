@@ -479,7 +479,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     When fitting the algorithm to data in batches (online), it's not possible to take an
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
-    distributed ~ Poisson(1). However, I've found that assigning random weights to observations
+    distributed ~ Poisson(1). However, assigning random gamma-distributed weights to observations
     produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(1,1).
     
     Parameters
@@ -634,7 +634,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
     When fitting the algorithm to data in batches (online), it's not possible to take an
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
-    distributed ~ Poisson(1). However, I've found that assigning random weights to observations
+    distributed ~ Poisson(1). However, assigning random gamma-distributed weights to observations
     produces a more stable effect, so it also has the option to assign weights randomly ~ Gamma(1,1).
 
     Note

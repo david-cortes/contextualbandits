@@ -448,7 +448,10 @@ class _BootstrappedClassifierBase:
 
     def partial_fit(self, X, y, classes=None):
         if self.partial_method == "gamma":
-            w_all = self.random_state.standard_gamma(1, size = (X.shape[0], self.nsamples))
+            w_all = -np.log(self
+                            .random_state
+                            .random(size=(X.shape[0], self.nsamples))
+                            .clip(min=1e-12, max=None))
             appear_times = None
             rng = None
         elif self.partial_method == "poisson":
