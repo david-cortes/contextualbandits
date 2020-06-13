@@ -195,27 +195,6 @@ def _check_1d_inp(y):
     assert len(y.shape) == 1
     return y
 
-def _check_bay_inp(method, n_iter, n_samples):
-    assert method in ['advi','nuts', 'metropolis']
-    if n_iter == 'auto':
-        if method == 'nuts':
-            n_iter = 10000
-        elif method == 'metropolis':
-            n_iter = 25000
-        else:
-            n_iter = 5000
-    assert n_iter > 0
-    if isinstance(n_iter, float):
-        n_iter = int(n_iter)
-    assert isinstance(n_iter, int)
-
-    assert n_samples > 0
-    if isinstance(n_samples, float):
-        n_samples = int(n_samples)
-    assert isinstance(n_samples, int)
-
-    return n_iter, n_samples
-
 def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
     if (refit_buffer_X is not None) or (refit_buffer_y is not None):
         if not refit_buffer:
