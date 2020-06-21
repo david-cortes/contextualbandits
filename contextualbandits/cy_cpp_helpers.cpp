@@ -100,7 +100,8 @@ void weighted_partial_shuffle
         for (long lev = 0; lev < tree_levels; lev++)
         {
             curr_ix = ix_parent(curr_ix);
-            buffer_arr[curr_ix] -= weights[outp[el]];
+            buffer_arr[curr_ix] =   buffer_arr[ix_child(curr_ix)]
+                                  + buffer_arr[ix_child(curr_ix) + 1];
         }
     }
 

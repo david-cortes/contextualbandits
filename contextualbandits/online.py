@@ -9,7 +9,7 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
             _check_autograd_supported, _get_logistic_grads_norms, \
             _gen_random_grad_norms, _gen_zero_norms, \
-            _check_bay_inp, _apply_softmax, _apply_inverse_sigmoid, \
+            _apply_softmax, _apply_inverse_sigmoid, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
