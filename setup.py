@@ -13,12 +13,15 @@ class build_ext_subclass( build_ext ):
             for e in self.extensions:
                 e.extra_compile_args += ['-O3', '-march=native', '-fopenmp']
                 e.extra_link_args += ['-fopenmp']
-            
+
+                if e.language == "c++":
+                    e.extra_compile_args += ['-std=c++11']
+
             ### Remove this code if you have a mac with gcc or clang + openmp
             if platform[:3] == "dar":
                 for e in self.extensions:
-                    e.extra_compile_args = [arg for arg in extra_compile_args if arg != '-fopenmp']
-                    e.extra_link_args    = [arg for arg in extra_link_args    if arg != '-fopenmp']
+                    e.extra_compile_args = [arg for arg in e.extra_compile_args if arg != '-fopenmp']
+                    e.extra_link_args    = [arg for arg in e.extra_link_args    if arg != '-fopenmp']
         build_ext.build_extensions(self)
 
 setup(
