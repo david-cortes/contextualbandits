@@ -1,9 +1,36 @@
 import numpy as np
 cimport numpy as np
-from cython.parallel cimport prange, threadid
 import ctypes
 from scipy.linalg.cython_lapack cimport dpotrf, dpotri
 from cython cimport boundscheck, nonecheck, wraparound
+
+cdef extern from "cy_cpp_helpers.cpp":
+    void choice_over_rows_cpp(
+        double pred[],
+        long outp[],
+        long nrows, long ncols,
+        int nthreads,
+        unsigned int random_seed
+    ) nogil
+
+    void topN_byrow_cpp(
+        double scores[],
+        long outp[],
+        long nrow,
+        long ncol,
+        long n,
+        int nthreads
+    ) nogil
+
+    void topN_softmax_cpp(
+        double scores[],
+        long outp[],
+        long nrow,
+        long ncol,
+        long n,
+        int nthreads,
+        unsigned long seed
+    ) nogil
 
 def _choice_over_rows(
         pred_in,
@@ -13,29 +40,22 @@ def _choice_over_rows(
     cdef np.ndarray[double, ndim=2] pred = \
         np.require(pred_in, dtype=ctypes.c_double,
                    requirements=["C_CONTIGUOUS", "OWNDATA"])
-    pred[:] /= pred.sum(axis = 1, keepdims = True)
     cdef long m = pred.shape[0]
     cdef long n = pred.shape[1]
     cdef np.ndarray[long, ndim=1] outp = np.empty(m, dtype=ctypes.c_long)
-    cdef np.ndarray[double, ndim=1] rnd = rs.random(size = m)
-    cdef np.ndarray[double, ndim=1] cump = np.zeros(nthreads, dtype=np.float64)
+    cdef unsigned int seed = rs.integers(low=1, high=np.iinfo(np.int32).max, dtype=np.uint32)
 
     cdef double *ptr_p = &pred[0,0]
-    cdef double *ptr_r = &rnd[0]
-    cdef double *ptr_cump = &cump[0]
-    cdef long* ptr_outp = &outp[0]
-    cdef long row, col
+    cdef long *ptr_outp = &outp[0]
 
-    for row in prange(m, schedule="static", num_threads=nthreads, nogil=True):
-        ptr_cump[threadid()] = 0
-        for col in range(n):
-            ptr_cump[threadid()] += ptr_p[col + row*n]
-            if ptr_cump[threadid()] >= ptr_r[row]:
-                ptr_outp[row] = col
-                break
-        if (col == (n-1)):
-            ptr_outp[row] = col
-
+    with nogil:
+        choice_over_rows_cpp(
+            ptr_p,
+            ptr_outp,
+            m, n,
+            nthreads,
+            seed
+        )
     return outp
 
 def _matrix_inv_symm(
@@ -75,26 +95,6 @@ def _create_node_counters(
                 cnt_pos[node_ix[i]] += 1
             else:
                 cnt_neg[node_ix[i]] += 1
-
-cdef extern from "cy_cpp_helpers.cpp":
-    void topN_byrow_cpp(
-        double scores[],
-        long outp[],
-        long nrow,
-        long ncol,
-        long n,
-        int nthreads
-    ) nogil
-
-    void topN_softmax_cpp(
-        double scores[],
-        long outp[],
-        long nrow,
-        long ncol,
-        long n,
-        int nthreads,
-        unsigned long seed
-    ) nogil
 
 def topN_byrow(
         scores_in,

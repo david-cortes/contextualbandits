@@ -10,6 +10,47 @@
     #define omp_get_thread_num() (0)
 #endif
 
+void choice_over_rows_cpp
+(
+    double pred[],
+    long outp[],
+    long nrows, long ncols,
+    int nthreads,
+    unsigned int random_seed
+)
+{
+    std::default_random_engine rng(random_seed);
+    std::uniform_real_distribution<double> runif(0., 1.);
+    double sum_row;
+    double rnd;
+    long col;
+    #pragma omp parallel for schedule(static) num_threads(nthreads) \
+            private(sum_row, rnd, col) shared(nrows, ncols, pred, outp)
+    for (long row = 0; row < nrows; row++)
+    {
+        sum_row = 0;
+        for (col = 0; col < ncols; col++)
+            sum_row += pred[col + row*ncols];
+        /* For numerical precision reasons, first standardize the row to sum to 1 */
+        for (col = 0; col < ncols; col++)
+            pred[col + row*ncols] /= sum_row;
+
+        rnd = runif(rng);
+        sum_row = 0;
+        for (col = 0; col < ncols; col++)
+        {
+            sum_row += pred[col + row*ncols];
+            if (sum_row >= rnd)
+            {
+                outp[row] = col;
+                break;
+            }
+        }
+        if (col == ncols-1)
+            outp[row] = col;
+    }
+}
+
 void topN_byrow_cpp
 (
     double scores[],

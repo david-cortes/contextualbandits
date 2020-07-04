@@ -2,7 +2,6 @@ import numpy as np
 cimport numpy as np
 import ctypes
 from libc.string cimport memcpy, memset
-from cython.parallel cimport prange
 from cython cimport boundscheck, nonecheck, wraparound
 
 ctypedef enum CBLAS_ORDER:
