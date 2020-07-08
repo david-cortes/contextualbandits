@@ -173,7 +173,7 @@ void topN_softmax_cpp
             std::uniform_int_distribution<unsigned long>(0, ULONG_MAX)(rng_glob)
             );
 
-    long tree_levels = log2ceil(nrow);
+    long tree_levels = log2ceil(ncol);
     std::vector<double> buffer_arr_thread((long)nthreads * pow2(tree_levels + 1));
 
     int tid;
@@ -184,7 +184,7 @@ void topN_softmax_cpp
     {
         tid = omp_get_thread_num();
         weighted_partial_shuffle(
-            outp + row*n, nrow, n, scores + row*ncol,
+            outp + row*n, ncol, n, scores + row*ncol,
             rng_row[row],
             buffer_arr_thread.data() + (long)tid*pow2(tree_levels + 1),
             tree_levels
