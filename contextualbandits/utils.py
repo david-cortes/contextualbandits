@@ -147,13 +147,26 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
         out = beta_prior
     return out
 
-def _check_smoothing(smoothing):
+def _check_smoothing(smoothing, nchoices):
     if smoothing is None:
         return None
-    assert len(smoothing) >= 2
-    assert (smoothing[0] >= 0) & (smoothing[1] >= 0)
-    assert smoothing[1] >= smoothing[0]
-    return float(smoothing[0]), float(smoothing[1])
+    if not (isinstance(smoothing, np.ndarray) or len(smoothing) == nchoices):
+        assert len(smoothing) >= 2
+        assert (smoothing[0] >= 0) & (smoothing[1] > 0)
+        assert smoothing[1] >= smoothing[0]
+        return float(smoothing[0]), float(smoothing[1])
+    else:
+        if (nchoices == 2) and (not isinstance(smoothing, np.ndarray)):
+            if smoothing[0].__class__.__name__ not in ("tuple", "list", "Series", "NoneType"):
+                return _check_smoothing(smoothing, 3)
+        if not isinstance(smoothing, np.ndarray):
+            smoothing = np.array(smoothing).T
+        if smoothing.shape[1] != nchoices:
+            raise ValueError("Number of entries in 'smoothing' doesn't match with 'nchoices'.")
+        if smoothing.shape[0] != 2:
+            raise ValueError("'smoothing' should have only tuples of length 2.")
+        return smoothing
+
 
 
 def _check_fit_input(X, a, r, choice_names = None):
@@ -283,7 +296,10 @@ def _gen_zero_norms(X, n_pos, n_neg):
 
 def _apply_smoothing(preds, smoothing, counts, add_noise, random_state):
     if (smoothing is not None) and (counts is not None):
-        preds[:, :] = (preds * counts + smoothing[0]) / (counts + smoothing[1])
+        if not isinstance(smoothing, np.ndarray):
+            preds[:, :] = (preds * counts + smoothing[0]) / (counts + smoothing[1])
+        else:
+            preds[:, :] = (preds * counts + smoothing[0].reshape((1,-1))) / (counts + smoothing[1].reshape((1,-1)))
         if add_noise:
             preds[:, :] += random_state.uniform(low=0., high=1e-12, size=preds.shape)
     return None

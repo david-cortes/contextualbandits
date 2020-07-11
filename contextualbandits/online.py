@@ -32,7 +32,7 @@ class _BasePolicy:
 
         self._add_choices(nchoices)
         _check_constructor_input(base_algorithm, self.nchoices, batch_train)
-        self.smoothing = _check_smoothing(smoothing)
+        self.smoothing = _check_smoothing(smoothing, self.nchoices)
         self.noise_to_smooth = bool(noise_to_smooth)
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
@@ -186,11 +186,13 @@ class _BasePolicy:
                 self._get_grad_norms[:drop_ix] + self._get_grad_norms[drop_ix + 1:]
             if isinstance(self._rand_grad_norms, list):
                 self._rand_grad_norms[:drop_ix] + self._rand_grad_norms[drop_ix + 1:]
+        if isinstance(self.smoothing, np.ndarray):
+            self.smoothing = np.c_[self.smoothing[:,:drop_ix], self.smoothing[:,drop_ix + 1:]]
 
     ## TODO: maybe add functionality to take an arm from another object of this class
 
     def add_arm(self, arm_name = None, fitted_classifier = None,
-                n_w_rew = 0, n_wo_rew = 0,
+                n_w_rew = 0, n_wo_rew = 0, smoothing = None,
                 refit_buffer_X = None, refit_buffer_r = None,
                 f_grad_norm = None, case_one_class = None):
         """
@@ -210,6 +212,12 @@ class _BasePolicy:
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
             Number of trials/rounds without rewards coming from this arm (only used when using a beta prior or smoothing).
+        smoothing : None, tuple (a,b), or list
+            Smoothing parameters to use for this arm (see documentation of the class constructor
+            for details). If ``None`` and if the ``smoothing`` passed to the constructor didn't have
+            separate entries per arm, will use the same ``smoothing`` as was passed in the constructor.
+            If no ``smoothing`` was passed to the constructor, the ``smoothing`` here will be ignored.
+            Must pass a ``smoothing`` here if the constructor was passed a ``smoothing`` with different entries per arm.
         refit_buffer_X : array(m, n) or None
             Refit buffer of 'X' data to use for the new arm. Ignored when using
             'batch_train=False' or 'refit_buffer=None'.
@@ -248,10 +256,12 @@ class _BasePolicy:
             if isinstance(self._rand_grad_norms, list):
                 if not callable(case_one_class):
                     raise ValueError("'case_one_class' must be a function.")
+        smoothing = _check_smoothing(smoothing, 1)
 
         self._oracles._spawn_arm(fitted_classifier, n_w_rew, n_wo_rew,
                                  refit_buffer_X, refit_buffer_r)
         self._append_arm(arm_name, f_grad_norm, case_one_class)
+        self._add_to_smoothing(smoothing)
         return self
 
     def _check_new_arm_name(self, arm_name):
@@ -272,6 +282,16 @@ class _BasePolicy:
         if case_one_class is not None:
             self._rand_grad_norms.append(case_one_class)
         self.nchoices += 1
+
+    def _add_to_smoothing(self, smoothing):
+        if self.smoothing is None:
+            return None
+        if (smoothing is None) and (isinstance(self.smoothing, np.ndarray)):
+            raise ValueError("Must pass smoothing parameters for new arm.")
+        elif smoothing is not None:
+            if isinstance(self.smoothing, tuple):
+                self.smoothing = np.repeat(np.array(self.smoothing), self.nchoices).reshape((2,-1))
+            self.smoothing = np.c_[self.smoothing, np.array(smoothing).reshape((2,1))]
 
     def fit(self, X, a, r, warm_start=False):
         """
@@ -514,9 +534,11 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -670,9 +692,11 @@ class BootstrappedTS(_BasePolicyWithExploit):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -835,9 +859,11 @@ class LogisticUCB(_BasePolicyWithExploit):
         parameter should be higher than for other methods.
         Recommended to use only one of ``beta_prior`` or ``smoothing``. Ignored when
         passing ``ucb_from_empty=True``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
@@ -981,9 +1007,11 @@ class LogisticTS(_BasePolicyWithExploit):
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
         Ignored when passing ``ci_from_empty=True``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
@@ -1068,9 +1096,11 @@ class SeparateClassifiers(_BasePolicy):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -1247,9 +1277,11 @@ class EpsilonGreedy(_BasePolicy):
         The impact of ``beta_prior`` for ``EpsilonGreedy`` is not as high as for other
         policies in this module.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -1578,9 +1610,11 @@ class AdaptiveGreedy(_ActivePolicy):
         other methods in this module, and it's recommended to experiment with different
         values of this hyperparameter.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -1980,9 +2014,11 @@ class ExploreFirst(_ActivePolicy):
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -2260,9 +2296,11 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
@@ -2422,9 +2460,11 @@ class SoftmaxExplorer(_BasePolicy):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -2703,9 +2743,11 @@ class LinUCB(_BasePolicyWithExploit):
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
         Ignored when passing ``ucb_from_empty=True``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
         Note that it is technically incorrect to apply smoothing like this (because
         the predictions from models are not bounded between zero and one), but
@@ -2879,9 +2921,11 @@ class LinTS(LinUCB):
         scenarios with large expected reward rates should have stronger priors and
         tend towards larger random numbers. Also, the more arms there are, the smaller
         the optimal expected value for these random numbers.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
         Note that it is technically incorrect to apply smoothing like this (because
         the predictions from models are not bounded between zero and one), but
@@ -2992,9 +3036,11 @@ class ParametricTS(_BasePolicyWithExploit):
         Beta prior used for the distribution from which to draw probabilities given
         the base algorithm's estimates. This is independent of ``beta_prior``, and
         they will not be used together under the same arm. Pass '(0,0)' for no prior.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         This will not work well with non-probabilistic classifiers such as SVM, in which case you might
         want to define a class that embeds it with some recalibration built-in.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -3142,10 +3188,11 @@ class PartitionedUCB(_BasePolicyWithExploit):
         Note that this method calculates upper bounds rather than expectations, so the 'a'
         parameter should be higher than for other methods.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
-        want to define a class that embeds it with some recalibration built-in.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Not recommended for this method.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
@@ -3282,9 +3329,11 @@ class PartitionedTS(_BasePolicyWithExploit):
         the other policies in this library:
             beta_prior = ((2/log2(nchoices), 4), 2)
         Additionally, will use (a,b) as prior when sampling from the MAB at a given node.
-    smoothing : None or tuple (a,b)
+    smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
         where 'n' is the number of times each arm was chosen in the training data.
+        Can also pass it as a list of tuples with different 'a' and 'b' parameters for each arm
+        (e.g. if there are arm features, these parameters can be determined through a different model).
         Not recommended for this method.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random

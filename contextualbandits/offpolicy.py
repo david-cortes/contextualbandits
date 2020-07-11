@@ -94,9 +94,9 @@ class DoublyRobustEstimator:
         Beta prior to pass to 'SeparateClassifiers'. Only used when passing to
         'reward_estimator' a classifier with 'predict_proba'. See the documentation
         of 'SeparateClassifiers' for details about it.
-    smoothing : tuple(a, b) or None
-        Smoothing parameter to pass to 'SeparateClassifiers' Only used when passing to 'reward_estimator'
-        a classifier with 'predict_proba'.
+    smoothing : tuple(a, b), list, or None
+        Smoothing parameter to pass to ``SeparateClassifiers``. Only used when passing to 'reward_estimator'
+        a classifier with 'predict_proba'. See the documentation of ``SeparateClassifiers`` for details.
     njobs : int or None
         Number of parallel jobs to run. If passing None will set it to 1. If passing -1 will
         set it to the number of CPU cores.
@@ -112,7 +112,7 @@ class DoublyRobustEstimator:
     """
     def __init__(self, base_algorithm, reward_estimator, nchoices, method='rovr',
                  handle_invalid=True, random_state=1, c=None, pmin=1e-5,
-                 beta_prior=None, smoothing=(1,2), njobs=-1, **kwargs_costsens):
+                 beta_prior=None, smoothing=(1.,2.), njobs=-1, **kwargs_costsens):
         assert (method == 'rovr') or (method == 'wap')
         self.method = method
         if method == 'wap':
@@ -145,7 +145,7 @@ class DoublyRobustEstimator:
         self.handle_invalid = handle_invalid
         self.random_state = _check_random_state(random_state)
         self.beta_prior = beta_prior
-        self.smoothing = _check_smoothing(smoothing)
+        self.smoothing = _check_smoothing(smoothing, nchoices)
         self.njobs = _check_njobs(njobs)
         self.kwargs_costsens = kwargs_costsens
         self.is_fitted = False
