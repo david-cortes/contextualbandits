@@ -274,7 +274,7 @@ def fit_model_noinv(
     if lam != 0.:
         XtX[np.arange(n), np.arange(n)] += lam
 
-    cdef np.ndarray[realtp, ndim=2] XtX_copy
+    cdef np.ndarray[realtp, ndim=2] XtX_copy = XtX.copy()
     cdef np.ndarray[realtp, ndim=1] XtY_copy = XtY.copy()
 
     cdef char lo = 'L'
@@ -282,16 +282,16 @@ def fit_model_noinv(
     cdef int ignore = 0
 
     if not calc_inv:
-        XtX_copy = XtX.copy()
         tposv(&lo, &n_plusb, &one_int, &XtX[0,0], &n_plusb, &XtY[0], &n_plusb, &ignore)
         return XtX_copy, XtX, XtY_copy, XtY
         ## XtX, invXtX, XtY, coef
+        ##      (chol)
 
     else:
         tposv(&lo, &n_plusb, &one_int, &XtX[0,0], &n_plusb, &XtY[0], &n_plusb, &ignore)
         tpotri(&lo, &n_plusb, &XtX[0,0], &n_plusb, &ignore)
-        return np.empty((0,0), dtype=C_realtp), XtX, XtY_copy, XtY
-        ## dummy, invXtX, XtY, coef
+        return XtX_copy, XtX, XtY_copy, XtY
+        ## XtX, invXtX, XtY, coef
 
 
 def fit_model_inv(
@@ -727,12 +727,12 @@ def get_matrix_inv(
     ):
     if X.shape[0] == 0:
         return None
-    invX[:, :] = X[:, :]
     cdef realtp *ptr_X = &X[0,0]
     cdef realtp *ptr_invX = &invX[0,0]
     cdef int n = X.shape[0]
     cdef int ignore = 0
     cdef char lo = 'L'
     with nogil:
+        memcpy(ptr_invX, ptr_X, <size_t>(X.shape[0]*X.shape[1])*sizeof(realtp))
         tpotrf(&lo, &n, ptr_invX, &n, &ignore)
         tpotri(&lo, &n, ptr_invX, &n, &ignore)

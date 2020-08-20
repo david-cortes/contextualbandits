@@ -43,14 +43,20 @@ class LinearRegression(BaseEstimator):
             a matrix inverse. This is likely to be faster when fitting the model
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
+
+        Note that it is possible to change the method after the object has
+        already been fit (e.g. if you want non-regularization intercept
+        with fast online updates, you might use Cholesky first and then switch
+        to Sherman-Morrison).
     calc_inv : bool
         When using ``method='chol'``, whether to also produce a matrix inverse, which
         is required for using the LinUCB and LinTS prediction modes. Ignored when
-        passing ``method='sm'`` (the default).
+        passing ``method='sm'`` (the default). Note that is is possible to change
+        the method after the object has already been fit.
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
-        very large.
+        very large. Can be changed after initialization.
     copy_X : bool
         Whether to make deep copies of the 'X' input passed to the model's methods.
         If passing 'False', the 'X' object might be modified in-place. Note that
@@ -226,7 +232,7 @@ class LinearRegression(BaseEstimator):
                     X, y, w, Xcsr,
                     add_bias=self.fit_intercept,
                     lam = self.lambda_,
-                    calc_inv=self.calc_inv
+                    calc_inv=(self.calc_inv) or (self.method != "chol")
                 )
         else:
             self._invXtX, self._XtY, self.coef_ = \
@@ -280,6 +286,8 @@ class LinearRegression(BaseEstimator):
                 calc_inv=self.calc_inv
             )
         else:
+            if not self._bufferX.shape[0]:
+                self._bufferX = np.empty(self._n + int(self.fit_intercept), dtype=self._dtype)
             cy_funs.update_running_inv(
                 self._invXtX,
                 self._XtY,
