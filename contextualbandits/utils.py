@@ -137,6 +137,16 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
             out = ( (3.0 / np.log2(nchoices), 4.0), 2 )
     elif beta_prior is None:
         out = ((1.0,1.0), 0)
+    elif isinstance(beta_prior, list):
+        assert len(beta_prior) == nchoices
+        for prior in beta_prior:
+            if ( (len(prior) != 2)
+                or (len(prior[0]) != 2)
+                or (prior[0][0] <= 0.) or (prior[0][1] <= 0.)
+                or (prior[1] < 0)
+                ):
+                raise ValueError("Invalid value for 'beta_prior'.")
+        out = beta_prior
     else:
         assert len(beta_prior) == 2
         assert len(beta_prior[0]) == 2
@@ -321,17 +331,49 @@ def _apply_inverse_sigmoid(x):
         x[:] = np.log(x / (1.0 - x))
     return None
 
+def _apply_softmax(x):
+    x[:, :] = np.exp(x - x.max(axis=1).reshape((-1, 1)))
+    x[:, :] = x / x.sum(axis=1).reshape((-1, 1))
+    x[x > 1.] = 1.
+    return None
+
+def _beta_prior_by_arm(beta_prior, nchoices):
+    ### Outputs entries [a_i],[b_i],[n_i]
+    ### From a tuple ((a,b) n)
+    ### Or from a list of such tuples
+    if beta_prior is None:
+        return (
+            np.array([None] * nchoices),
+            np.array([None] * nchoices),
+            np.zeros(nchoices)
+        )
+    elif isinstance(beta_prior, tuple):
+        return (
+            np.array([beta_prior[0][0]] * nchoices),
+            np.array([beta_prior[0][1]] * nchoices),
+            np.array([beta_prior[1]]    * nchoices)
+        )
+    elif isinstance(beta_prior, list):
+        return (
+            np.array([prior[0][0] for prior in beta_prior]),
+            np.array([prior[0][1] for prior in beta_prior]),
+            np.array([prior[1]    for prior in beta_prior])
+        )
+    else:
+        raise ValueError(_unexpected_err_msg)
+
 def is_from_this_module(base):
     return (isinstance(base, _BootstrappedClassifierBase) or
             isinstance(base, _LinUCB_n_TS_single) or
             isinstance(base, _LogisticUCB_n_TS_single) or
             isinstance(base, _TreeUCB_n_TS_single))
 
-def _apply_softmax(x):
-    x[:, :] = np.exp(x - x.max(axis=1).reshape((-1, 1)))
-    x[:, :] = x / x.sum(axis=1).reshape((-1, 1))
-    x[x > 1.] = 1.
-    return None
+def _make_robust_base(base, partialfit):
+    if 'predict_proba' not in dir(base):
+        base = _convert_decision_function_w_sigmoid(base)
+    if partialfit:
+        base = _add_method_predict_robust(base)
+    return base
 
 class _FixedPredictor:
     def __init__(self):
@@ -656,7 +698,7 @@ class _RefitBuffer:
 class _OneVsRest:
     def __init__(self, base,
                  X, a, r, n,
-                 thr, alpha, beta,
+                 alpha, beta, thr,
                  random_state,
                  smooth=False, noise_to_smooth=True, assume_un=False,
                  partialfit=False, refit_buffer=0, deep_copy=False,
@@ -677,7 +719,7 @@ class _OneVsRest:
         self.deep_copy = deep_copy
         self.partialfit = bool(partialfit)
         self.force_counters = bool(force_counters)
-        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr[0] and not self.force_fit):
             ## in case it has beta prior, keeps track of the counters until no longer needed
             self.alpha = alpha
             self.beta = beta
@@ -710,16 +752,10 @@ class _OneVsRest:
             self.buffer = None
 
         if not isinstance(base, list):
-            if 'predict_proba' not in dir(base):
-                base = _convert_decision_function_w_sigmoid(base)
-            if partialfit:
-                base = _add_method_predict_robust(base)
+            base = _make_robust_base(base, self.partialfit)
         else:
             for alg in range(len(base)):
-                if 'predict_proba' not in dir(base[alg]):
-                    base[alg] = _convert_decision_function_w_sigmoid(base[alg])
-                if partialfit:
-                    base[alg] = _add_method_predict_robust(base[alg])
+                base[alg] = _make_robust_base(base[alg], self.partialfit)
         
         if isinstance(base, list):
             self.base = None
@@ -733,11 +769,14 @@ class _OneVsRest:
                         self.algos[choice] = deepcopy(base)
                         if is_from_this_module(base):
                             self.algos[choice].random_state = self.rng_arm[choice]
-            else: 
+            else:
                 self.algos = [deepcopy(base) for choice in range(self.n)]
                 if is_from_this_module(base):
                     for choice in range(self.n):
                         self.algos[choice].random_state = self.rng_arm[choice]
+                    if isinstance(base, _TreeUCB_n_TS_single) and (base.ts):
+                        for choice in range(self.n):
+                            self.algos[choice]._set_prior(self.alpha[choice], self.beta[choice])
 
         if self.partialfit:
             self.partial_fit(X, a, r)
@@ -746,43 +785,55 @@ class _OneVsRest:
                     (delayed(self._full_fit_single)\
                             (choice, X, a, r) for choice in range(self.n))
 
-    def _drop_arm(self, drop_ix):
+    def _drop_arm(self, drop_ix, alpha, beta, thr):
         del self.algos[drop_ix]
         del self.rng_arm[drop_ix]
         if self.buffer is not None:
-            del sef.buffer[drop_ix]
+            del self.buffer[drop_ix]
         self.n -= 1
+        self.thr = thr
+
         if self.smooth is not None:
             self.counters = self.counters[:, np.arange(self.counters.shape[1]) != drop_ix]
-        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr[0] and not self.force_fit):
             self.beta_counters = self.beta_counters[:, np.arange(self.beta_counters.shape[1]) != drop_ix]
+            self.alpha = alpha
+            self.beta = beta
 
     def _spawn_arm(self, fitted_classifier = None, n_w_rew = 0, n_wo_rew = 0,
-                   buffer_X = None, buffer_y = None):
+                   buffer_X = None, buffer_y = None,
+                   beta_prior_by_arm = None):
+        alpha = beta_prior_by_arm[0][-1]
+        beta = beta_prior_by_arm[1][-1]
+        thr = beta_prior_by_arm[2][-1]
+        self.thr = beta_prior_by_arm[2]
         self.n += 1
         self.rng_arm.append(self.random_state if (self.random_state == np.random) else \
                             _check_random_state(
                                 self.random_state.integers(np.iinfo(np.int32).max) + 1))
         if self.smooth is not None:
             self.counters = np.c_[self.counters, np.array([n_w_rew + n_wo_rew]).reshape((1, 1)).astype(self.counters.dtype)]
-        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
-            new_beta_col = np.array([0 if (n_w_rew + n_wo_rew) < self.thr else 1, self.alpha + n_w_rew, self.beta + n_wo_rew]).reshape((3, 1)).astype(self.beta_counters.dtype)
+        if (self.force_counters) or (thr and not self.force_fit):
+            new_beta_col = \
+                np.array([0 if (n_w_rew + n_wo_rew) < thr else 1,
+                          n_w_rew, n_wo_rew])\
+                    .reshape((3, 1)).astype(self.beta_counters.dtype)
             self.beta_counters = np.c_[self.beta_counters, new_beta_col]
+            self.alpha = beta_prior_by_arm[0]
+            self.beta  = beta_prior_by_arm[1]
         if fitted_classifier is not None:
-            if 'predict_proba' not in dir(fitted_classifier):
-                fitted_classifier = _convert_decision_function_w_sigmoid(fitted_classifier)
-            if partialfit:
-                fitted_classifier = _add_method_predict_robust(fitted_classifier)
+            fitted_classifier = _make_robust_base(fitted_classifier, self.partialfit)
             self.algos.append(fitted_classifier)
         else:
             if self.force_fit or self.partialfit:
                 if self.base is None:
+                    ### Note: this conditioned was already checked outside of _OneVsRest
                     raise ValueError("Must provide a classifier when initializing with different classifiers per arm.")
                 self.algos.append( deepcopy(self.base) )
             else:
-                if (self.force_counters) or (self.thr > 0 and not self.force_fit):
-                    self.algos.append(_BetaPredictor(self.beta_counters[:, -1][1],
-                                                     self.beta_counters[:, -1][2],
+                if (self.force_counters) or (thr and not self.force_fit):
+                    self.algos.append(_BetaPredictor(self.beta_counters[:, -1][1] + alpha,
+                                                     self.beta_counters[:, -1][2] + beta,
                                                      self.rng_arm[-1]))
                 else:
                     self.algos.append(_ZeroPredictor())
@@ -797,7 +848,7 @@ class _OneVsRest:
             n_pos = (yclass > 0.).sum()
             self.beta_counters[1, choice] += n_pos
             self.beta_counters[2, choice] += yclass.shape[0] - n_pos
-            if (self.beta_counters[1, choice] > self.thr) and (self.beta_counters[2, choice] > self.thr):
+            if (self.beta_counters[1, choice] > self.thr[choice]) and (self.beta_counters[2, choice] > self.thr[choice]):
                 self.beta_counters[0, choice] = 1
 
     def _full_fit_single(self, choice, X, a, r):
@@ -805,10 +856,10 @@ class _OneVsRest:
         n_pos = (yclass > 0.).sum()
         if self.smooth is not None:
             self.counters[0, choice] += yclass.shape[0]
-        if (n_pos < self.thr) or ((yclass.shape[0] - n_pos) < self.thr):
+        if (n_pos < self.thr[choice]) or ((yclass.shape[0] - n_pos) < self.thr[choice]):
             if not self.force_fit:
-                self.algos[choice] = _BetaPredictor(self.alpha + n_pos,
-                                                    self.beta + yclass.shape[0] - n_pos,
+                self.algos[choice] = _BetaPredictor(self.alpha[choice] + n_pos,
+                                                    self.beta[choice] + yclass.shape[0] - n_pos,
                                                     self.rng_arm[choice])
                 return None
         if n_pos == 0:
@@ -822,7 +873,7 @@ class _OneVsRest:
         xclass = X[this_choice, :]
         self.algos[choice].fit(xclass, yclass)
 
-        if (self.force_counters) or (self.thr > 0 and not self.force_fit):
+        if (self.force_counters) or (self.thr[choice] > 0 and not self.force_fit):
             self._update_beta_counters(yclass, choice)
 
 
@@ -880,11 +931,11 @@ class _OneVsRest:
     def _decision_function_single(self, choice, X, preds, depth=2):
         ## case when using partial_fit and need beta predictions
         if ((self.partialfit or self.force_fit) and
-            (self.thr > 0) and (not self.force_unfit_predict)):
+            (self.thr[choice] > 0) and (not self.force_unfit_predict)):
             if self.beta_counters[0, choice] == 0:
                 preds[:, choice] = \
-                    self.rng_arm[choice].beta(self.alpha + self.beta_counters[1, choice],
-                                              self.beta  + self.beta_counters[2, choice],
+                    self.rng_arm[choice].beta(self.alpha[choice] + self.beta_counters[1, choice],
+                                              self.beta[choice]  + self.beta_counters[2, choice],
                                               size=preds.shape[0])
                 return None
 
@@ -937,7 +988,7 @@ class _OneVsRest:
             return True
         if isinstance(self.algos[choice], _FixedPredictor):
             return False
-        if not bool(self.thr):
+        if not bool(self.thr[choice]):
             return True
         try:
             return bool(self.beta_counters[0, choice])
@@ -1166,18 +1217,22 @@ class _LogisticUCB_n_TS_single:
 class _TreeUCB_n_TS_single:
     def __init__(self, beta_prior=(1,1), ts=False, alpha=0.8, random_state=None,
                  *args, **kwargs):
-        self.beta_prior = beta_prior
+        self.beta_prior = beta_prior ## will be changed later in _OneVsRest
         self.random_state = random_state
         self.conf_coef = alpha
         self.ts = bool(ts)
         self.model = DecisionTreeClassifier(*args, **kwargs)
         self.is_fitted = False
-        self.aux_beta = (beta_prior[0], beta_prior[1])
+        self.aux_beta = (beta_prior[0], beta_prior[1]) ## changed later
 
     def __setattr__(self, name, value):
         if (name == "conf_coef"):
             value = norm_dist.ppf(value / 100.)
         super().__setattr__(name, value)
+
+    def _set_prior(self, alpha, beta):
+        self.beta_prior = (alpha, beta)
+        self.aux_beta = (alpha, beta)
 
     def update_aux(self, y):
         self.aux_beta[0] += (y >  0.).sum()

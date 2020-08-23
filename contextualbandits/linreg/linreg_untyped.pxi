@@ -602,6 +602,8 @@ def update_XtY(
         bint overwrite=0
     ):
 
+    ## TODO: maybe this one should do the updates row-by-row,
+    ## since most of the 'y' entries are expected to be zeros
     cdef CBLAS_ORDER x_ord = CblasRowMajor if not np.isfortran(X) else CblasColMajor
     
     cdef int n = X.shape[1] if Xcsr is None else Xcsr.shape[1]
@@ -692,6 +694,7 @@ def x_A_x_batch(
                         1., ptr_invXtX, n_plusb,
                         ptr_X, n,
                         0., ptr_tempX, n_plusb)
+            ## TODO: this is parallelizable, but doesn't get any improvement beyond 2 threads
             for i in range(m):
                 ptr_outp[i] = tdot(&n, ptr_tempX + i*n_plusb, &one_int, ptr_X + i*n, &one_int)
 

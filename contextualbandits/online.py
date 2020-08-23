@@ -10,6 +10,7 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _check_autograd_supported, _get_logistic_grads_norms, \
             _gen_random_grad_norms, _gen_zero_norms, \
             _apply_softmax, _apply_inverse_sigmoid, \
+            _beta_prior_by_arm, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
@@ -20,6 +21,9 @@ __all__ = ["BootstrappedUCB", "BootstrappedTS",
            "ExploreFirst", "ActiveExplorer", "SoftmaxExplorer",
            "LinUCB", "LinTS", "ParametricTS",
            "PartitionedUCB", "PartitionedTS"]
+
+### TODO: 'beta_prior' and its relationship with '_OneVsRest' needs a refactoring
+### after making it possible to have per-arm
 
 class _BasePolicy:
     def _add_common_params(self, base_algorithm, beta_prior, smoothing, noise_to_smooth,
@@ -36,7 +40,9 @@ class _BasePolicy:
         self.noise_to_smooth = bool(noise_to_smooth)
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
+        self._no_beta_prior = beta_prior is None
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
+        self._beta_prior_by_arm = _beta_prior_by_arm(self.beta_prior, self.nchoices)
         self.random_state = _check_random_state(random_state)
         self.force_unfit_predict = bool(force_unfit_predict)
 
@@ -87,10 +93,17 @@ class _BasePolicy:
         if not isinstance(base_algorithm, list):
             self.base_algorithm = self._make_bootstrapped(base_algorithm, percentile,
                                                           ts_byrow, ts_weighted)
+            self._base_bootstrapped = base_algorithm
         else:
             self.base_algorithm = [ \
                 self._make_bootstrapped(alg, percentile, ts_byrow, ts_weighted) \
                 for alg in base_algorithm]
+            self._base_bootstrapped = None
+
+        ### Used when adding new arms
+        self._ts_byrow = ts_byrow
+        self._ts_weighted = ts_weighted
+        self._percentile = percentile
 
     def _make_bootstrapped(self, base_algorithm, percentile,
                            ts_byrow, ts_weighted):
@@ -123,11 +136,11 @@ class _BasePolicy:
                 )
 
     def _name_arms(self, pred):
+        if not np.issubdtype(pred.dtype, np.integer):
+            pred = pred.astype(int)
         if self.choice_names is None:
             return pred
         else:
-            if not np.issubdtype(pred.dtype, np.integer):
-                pred = pred.astype(int)
             return self.choice_names[pred]
 
     def drop_arm(self, arm_name):
@@ -155,8 +168,11 @@ class _BasePolicy:
         if not self.is_fitted:
             raise ValueError("Cannot drop arm from unifitted policy.")
         drop_ix = self._get_drop_ix(arm_name)
-        self._oracles._drop_arm(drop_ix)
         self._drop_ix(drop_ix)
+        self._oracles._drop_arm(drop_ix,
+                                self._beta_prior_by_arm[0],
+                                self._beta_prior_by_arm[1],
+                                self._beta_prior_by_arm[2])
         self.has_warm_start = False
         return self
 
@@ -188,11 +204,18 @@ class _BasePolicy:
                 self._rand_grad_norms[:drop_ix] + self._rand_grad_norms[drop_ix + 1:]
         if isinstance(self.smoothing, np.ndarray):
             self.smoothing = np.c_[self.smoothing[:,:drop_ix], self.smoothing[:,drop_ix + 1:]]
+        self._beta_prior_by_arm[0] = np.r_[self._beta_prior_by_arm[0][:drop_ix], self._beta_prior_by_arm[0][drop_ix + 1:]]
+        self._beta_prior_by_arm[1] = np.r_[self._beta_prior_by_arm[1][:drop_ix], self._beta_prior_by_arm[1][drop_ix + 1:]]
+        self._beta_prior_by_arm[2] = np.r_[self._beta_prior_by_arm[2][:drop_ix], self._beta_prior_by_arm[2][drop_ix + 1:]]
+
+        if isinstance(self.base_algorithm, list):
+            del self.base_algorithm[drop_ix]
 
     ## TODO: maybe add functionality to take an arm from another object of this class
 
     def add_arm(self, arm_name = None, fitted_classifier = None,
-                n_w_rew = 0, n_wo_rew = 0, smoothing = None,
+                n_w_rew = 0, n_wo_rew = 0,
+                smoothing = None, beta_prior = None,
                 refit_buffer_X = None, refit_buffer_r = None,
                 f_grad_norm = None, case_one_class = None):
         """
@@ -207,7 +230,9 @@ class _BasePolicy:
             If a classifier has already been fit to rewards coming from this arm, you can pass it here, otherwise,
             will be started from the same 'base_classifier' as the initial arms. If using bootstrapped methods or methods from this module which do not
             accept arbitrary classifiers as input,
-            don't pass a classifier here (unless using the classes like e.g. `utils._BootstrappedClassifierBase`)
+            don't pass a classifier here (unless using the classes like e.g. `utils._BootstrappedClassifierBase`).
+            If the constructor was called with different ``base_algorithm`` per arm, must pass a
+            base classifier here. Not applicable for the classes that do not take a ``base_algorithm``.
         n_w_rew : int
             Number of trials/rounds with rewards coming from this arm (only used when using a beta prior or smoothing).
         n_wo_rew : int
@@ -218,6 +243,14 @@ class _BasePolicy:
             separate entries per arm, will use the same ``smoothing`` as was passed in the constructor.
             If no ``smoothing`` was passed to the constructor, the ``smoothing`` here will be ignored.
             Must pass a ``smoothing`` here if the constructor was passed a ``smoothing`` with different entries per arm.
+        beta_prior : None or tuple((a,b), n)
+            Beta prior to use for this arm. See the class' documenation for details.
+            Must be passed if the constructor was provided different beta priors per arm.
+            If ``None`` and the constructor had a single ``beta_prior``, will use that same
+            ``beta_prior`` for this new arm.
+            Note that ``n_w_rew`` and ``n_wo_rew`` will be counted towards the threshold 'n'
+            in here.
+            Cannot be passed if the constructor did not have a ``beta_prior``.
         refit_buffer_X : array(m, n) or None
             Refit buffer of 'X' data to use for the new arm. Ignored when using
             'batch_train=False' or 'refit_buffer=None'.
@@ -240,12 +273,33 @@ class _BasePolicy:
         self : object
             This object
         """
+        ### Note: don't do any in-place modifications until having checked all the inputs
         if not self.is_fitted:
             raise ValueError("Cannot add arm to unfitted policy.")
         assert isinstance(n_w_rew,  int)
         assert isinstance(n_wo_rew, int)
         assert n_w_rew >= 0
         assert n_wo_rew >= 0
+        if (self._no_beta_prior) and (beta_prior is not None):
+            raise ValueError("Cannot add arm with 'beta_prior' if the object did not use it.")
+        if (isinstance(self.beta_prior, list)) and (beta_prior is None):
+            raise ValueError("Must pass 'beta_prior' when using different priors per arm.")
+
+        if (fitted_classifier is not None) and (self._check_is_from_this_module()):
+            raise ValueError("Cannot pass 'fitted_classifier' for classes that do not take a 'base_algorithm'.")
+        if isinstance(self, BootstrappedUCB) or isinstance(self, BootstrappedTS):
+            if (fitted_classifier is not None)  and (not isinstance(fitted_classifier, _BootstrappedClassifierBase)):
+                raise ValueError("Cannot pass 'fitted_classifier' for bootstrapped policies.")
+            elif self._base_bootstrapped is None:
+                raise ValueError("Cannot append arm for bootstrapped policies with different 'base_algorithm' per arm.")
+            else:
+                fitted_classifier = self._make_bootstrapped(base_algorithm, self._percentile,
+                                                            self._ts_byrow, self._ts_weighted)
+
+        if isinstance(self.base_algorithm, list):
+            if (fitted_classifier is not None):
+                raise ValueError("Must pass 'fitted_classifier' when using different 'base_algorithm' per arm.")
+
         refit_buffer_X, refit_buffer_r = \
             _check_refit_inp(refit_buffer_X, refit_buffer_r, self.refit_buffer)
         arm_name = self._check_new_arm_name(arm_name)
@@ -258,11 +312,27 @@ class _BasePolicy:
                     raise ValueError("'case_one_class' must be a function.")
         smoothing = _check_smoothing(smoothing, 1)
 
+        ### Checks end here, can now start in-place modifications
+        ### This last function does a check at the beginning
+        self._add_to_beta_prior(beta_prior)
+        if isinstance(self.base_algorithm, list) and (fitted_classifier is not None):
+            self.base_algorithm.append(fitted_classifier)
+
         self._oracles._spawn_arm(fitted_classifier, n_w_rew, n_wo_rew,
-                                 refit_buffer_X, refit_buffer_r)
+                                 refit_buffer_X, refit_buffer_r,
+                                 self._beta_prior_by_arm)
         self._append_arm(arm_name, f_grad_norm, case_one_class)
         self._add_to_smoothing(smoothing)
         return self
+
+    def _check_is_from_this_module(self):
+        return \
+            isinstance(self, LogisticUCB) or \
+            isinstance(self, LogisticTS) or \
+            isinstance(self, LinUCB) or \
+            isinstance(self, LinTS) or \
+            isinstance(self, PartitionedUCB) or \
+            isinstance(self, PartitionedTS)
 
     def _check_new_arm_name(self, arm_name):
         if self.choice_names is None and arm_name is not None:
@@ -292,6 +362,17 @@ class _BasePolicy:
             if isinstance(self.smoothing, tuple):
                 self.smoothing = np.repeat(np.array(self.smoothing), self.nchoices).reshape((2,-1))
             self.smoothing = np.c_[self.smoothing, np.array(smoothing).reshape((2,1))]
+
+    def _add_to_beta_prior(self, beta_prior):
+        if beta_prior is None:
+            beta_prior = self.beta_prior
+        else:
+            if not isinstance(beta_prior, tuple):
+                raise ValueError("'beta_prior' must be a tuple.")
+            beta_prior = _check_beta_prior(beta_prior)
+        self._beta_prior_by_arm[0] = np.append(self._beta_prior_by_arm[0], beta_prior[0][0])
+        self._beta_prior_by_arm[1] = np.append(self._beta_prior_by_arm[1], beta_prior[0][1])
+        self._beta_prior_by_arm[2] = np.append(self._beta_prior_by_arm[2], beta_prior[1])
 
     def fit(self, X, a, r, warm_start=False):
         """
@@ -328,7 +409,9 @@ class _BasePolicy:
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
                                    self.nchoices,
-                                   self.beta_prior[1], self.beta_prior[0][0], self.beta_prior[0][1],
+                                   self._beta_prior_by_arm[0],
+                                   self._beta_prior_by_arm[1],
+                                   self._beta_prior_by_arm[2],
                                    self.random_state,
                                    self.smoothing, self.noise_to_smooth,
                                    self.assume_unique_reward,
@@ -352,7 +435,7 @@ class _BasePolicy:
         ----
         In order to use this method, the base classifier must have a 'partial_fit' method,
         such as 'sklearn.linear_model.SGDClassifier'. This method is not available
-        for 'LogisticUCB', nor for 'LogisticTS'.
+        for 'LogisticUCB', 'LogisticTS', 'PartitionedUCB', 'PartitionedTS'.
 
         Parameters
         ----------
@@ -519,12 +602,14 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         Number of bootstrapped samples per class to take.
     percentile : int [0,100]
         Percentile of the predictions sample to take
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((3/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         Note that it will only generate one random number per arm, so the 'a'
         parameter should be higher than for other methods.
         This parameter can have a very large impact in the end results, and it's
@@ -679,12 +764,14 @@ class BootstrappedTS(_BasePolicyWithExploit):
         custom name.
     nsamples : int
         Number of bootstrapped samples per class to take.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -843,12 +930,14 @@ class LogisticUCB(_BasePolicyWithExploit):
         recommended when the number of arms is large relative to the number of rounds.
         Instead, it's recommended to use ``beta_prior``, which acts in the same way
         as for the other policies in this library.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((3/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -934,7 +1023,7 @@ class LogisticTS(_BasePolicyWithExploit):
     """
     Logistic Regression with Thompson Sampling
 
-    Logistic regression classifier which samples its coefficients using
+    Logistic regression classifier which either samples its coefficients using
     the variance-covariance matrix of the predictors, or which samples
     predicted values from a confidence interval as a faster alternative.
 
@@ -993,12 +1082,14 @@ class LogisticTS(_BasePolicyWithExploit):
         can be very slow, using 'False' can provide a reasonable speed up
         without much of a performance penalty.
         Ignored when passing ``sample_from='ci'``.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -1060,7 +1151,7 @@ class LogisticTS(_BasePolicyWithExploit):
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False,
-                                force_unfit_predict=ci_from_empty and sample_from == "ci")
+                                force_unfit_predict=(ci_from_empty) and (sample_from == "ci"))
 
 class SeparateClassifiers(_BasePolicy):
     """
@@ -1083,12 +1174,14 @@ class SeparateClassifiers(_BasePolicy):
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -1268,12 +1361,14 @@ class EpsilonGreedy(_BasePolicy):
     decay : float (0,1)
         After each prediction, the explore probability reduces to
         p = p*decay
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         The impact of ``beta_prior`` for ``EpsilonGreedy`` is not as high as for other
         policies in this module.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
@@ -1594,12 +1689,14 @@ class AdaptiveGreedy(_ActivePolicy):
         If set to 'auto', will be calculated as initial_thr = 1 / (2 * sqrt(nchoices)).
         Note that if 'base_algorithm' has a 'decision_function' method, it will first apply a sigmoid function to the
         output, and then compare it to the threshold, so the threshold should lie between zero and one.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((3/nchoices, 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2007,12 +2104,14 @@ class ExploreFirst(_ActivePolicy):
         is defined in the absence of any data, but this tends to produce bad end
         results.
         Ignored when passing ``prob_active_choice=0.``
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -2283,12 +2382,14 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
     decay : float (0,1)
         After each prediction, the probability of selecting an arm according to active
         learning criteria is set to p = p*decay
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2447,12 +2548,14 @@ class SoftmaxExplorer(_BasePolicy):
     inflation_rate : float or None
         Number by which to multiply the multipier rate after every prediction, i.e. after making
         't' predictions, the multiplier will be 'multiplier_t = multiplier * inflation_rate^t'.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2730,12 +2833,14 @@ class LinUCB(_BasePolicyWithExploit):
         recommended when the number of arms is large relative to the number of rounds.
         Instead, it's recommended to use ``beta_prior``, which acts in the same way
         as for the other policies in this library.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((3/log2(nchoices), 4), 2).
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -2909,12 +3014,14 @@ class LinTS(LinUCB):
             a matrix inverse. This is likely to be faster when fitting the model
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -3019,12 +3126,14 @@ class ParametricTS(_BasePolicyWithExploit):
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -3101,6 +3210,7 @@ class ParametricTS(_BasePolicyWithExploit):
                  beta_prior_ts=(0.,0.), smoothing=None, noise_to_smooth=True,
                  batch_train=False, refit_buffer=None, deep_copy_buffer=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
+        ### TODO: change this to allow different pior per arm
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
@@ -3125,6 +3235,7 @@ class ParametricTS(_BasePolicyWithExploit):
         self : obj
             This object
         """
+        ### TODO: change to allow different pior per arm
         assert beta_prior_ts[0] >= 0.
         assert beta_prior_ts[1] >= 0.
         self.beta_prior_ts = beta_prior_ts
@@ -3173,12 +3284,14 @@ class PartitionedUCB(_BasePolicyWithExploit):
         number will be added to the number of positives, and second number to
         the number of negatives. If passing ``beta_prior=None``, will use these alone
         to generate an upper confidence bound and will break ties at random.
-    beta_prior : str 'auto', None, or tuple ((a,b), n)
+    beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
         random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'. If set to "auto", will be calculated as:
             beta_prior = ((3/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         This parameter can have a very large impact in the end results, and it's
         recommended to tune it accordingly - scenarios with low expected reward rates
         should have priors that result in drawing small random numbers, whereas
@@ -3236,18 +3349,20 @@ class PartitionedUCB(_BasePolicyWithExploit):
                  assume_unique_reward=False, random_state=None, njobs=-1,
                  *args, **kwargs):
         assert (percentile > 0) and (percentile < 100)
+        ### TODO: change this to allow a prior per arm
         assert ucb_prior[0] >= 0.
         assert ucb_prior[1] >= 0.
         self.ucb_prior = (float(ucb_prior[0]), float(ucb_prior[1]))
 
-        base = _TreeUCB_n_TS_single(self.ucb_prior, ts=False, alpha=float(percentile),
+        ## random_state will be changed later inside '_OneVsRest'
+        base = _TreeUCB_n_TS_single(ucb_prior, ts=False, alpha=float(percentile),
                                     random_state=None, *args, **kwargs)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs,
                                 nchoices, False, None, False,
                                 assume_unique_reward, random_state,
                                 prior_def_ucb = True,
                                 force_unfit_predict = beta_prior is None)
-        if self.beta_prior[1] <= 0:
+        if self._no_beta_prior:
             self.force_unfit_predict = True
 
     def reset_percentile(self, percentile=80):
@@ -3287,6 +3402,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
         self : obj
             This object
         """
+        ### TODO: make the prior resetable per arm too
         assert ucb_prior[0] >= 0.
         assert ucb_prior[1] >= 0.
         self.ucb_prior = (float(ucb_prior[0]), float(ucb_prior[1]))
@@ -3320,14 +3436,16 @@ class PartitionedTS(_BasePolicyWithExploit):
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
-    beta_prior : str 'auto', or tuple ((a,b), n)
+    beta_prior : str 'auto', tuple ((a,b), n), or list[tuple((a,b), n)]
         When there are less than 'n' samples with and without a reward from
         a given arm, it will predict the score
         for that class as a random number drawn from a beta distribution with the prior
         specified by 'a' and 'b'.
-        If passing 'auto' (which is *not* the default), will use the same default as for
+        If passing 'auto' (*which is not the default*), will use the same default as for
         the other policies in this library:
             beta_prior = ((2/log2(nchoices), 4), 2)
+        Can also pass different priors per arm, in which case they should be passed
+        as a list of tuples.
         Additionally, will use (a,b) as prior when sampling from the MAB at a given node.
     smoothing : None, tuple (a,b), or list
         If not None, predictions will be smoothed as yhat_smooth = (yhat*n + a)/(n + b),
@@ -3378,7 +3496,8 @@ class PartitionedTS(_BasePolicyWithExploit):
         if beta_prior is None:
             raise ValueError("Must pass a valid 'beta_prior'.")
         beta_prior = _check_beta_prior(beta_prior, nchoices)
-        base = _TreeUCB_n_TS_single(beta_prior[0], ts=True, random_state=None,
+        ## prior and random_state will be changed later inside '_OneVsRest'
+        base = _TreeUCB_n_TS_single((1,1), ts=True, random_state=None,
                                     *args, **kwargs)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs,
                                 nchoices, False, None, False,
