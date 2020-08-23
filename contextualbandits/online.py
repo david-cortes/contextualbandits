@@ -10,7 +10,7 @@ from .utils import _check_constructor_input, _check_beta_prior, \
             _check_autograd_supported, _get_logistic_grads_norms, \
             _gen_random_grad_norms, _gen_zero_norms, \
             _apply_softmax, _apply_inverse_sigmoid, \
-            _beta_prior_by_arm, \
+            _beta_prior_by_arm, _unexpected_err_msg, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
@@ -463,6 +463,7 @@ class _BasePolicy:
         else:
             return self.fit(X, a, r)
     
+    ### TODO: add option for passing a list of arms instead of predicting all
     def decision_function(self, X):
         """
         Get the scores for each arm following this policy's action-choosing criteria.
@@ -479,18 +480,23 @@ class _BasePolicy:
         """
         X = _check_X_input(X)
         if not self.is_fitted:
-            if not self._different_arm_priors:
+            if (not self._different_arm_priors) and (not isinstance(self.smoothing, np.ndarray)):
                 return self.random_state.random(size=(X.shape[0], self.nchoices))
             else:
-                return self._predict_from_beta_prior(X.shape[0])
+                return self._predict_from_beta_prior_and_smoothing(X.shape[0])
         return self._score_matrix(X)
 
-    def _predict_from_beta_prior(self, n):
-        pred = np.empty((n, self.nchoices), dtype=np.float64, order="F")
-        for choice in range(self.nchoices):
-            pred[:, choice] = self.random_state.beta(self._beta_prior_by_arm[0][choice],
-                                                     self._beta_prior_by_arm[1][choice],
-                                                     size=n)
+    def _predict_from_beta_prior_and_smoothing(self, n):
+        if self._no_beta_prior:
+            ### Can only reach this part if it has smoothing per arm
+            pred = np.zeros((n, self.nchoices))
+        else:
+            pred = np.empty((n, self.nchoices), dtype=np.float64, order="F")
+            for choice in range(self.nchoices):
+                pred[:, choice] = self.random_state.beta(self._beta_prior_by_arm[0][choice],
+                                                         self._beta_prior_by_arm[1][choice],
+                                                         size=n)
+        _apply_smoothing(pred, self.smoothing, 1, self.noise_to_smooth, self.random_state)
         return pred
 
     ### TODO: add option to incorporate magnitude of rewards per arm (e.g. bid per click)
@@ -499,11 +505,11 @@ class _BasePolicy:
 
     def _predict_random_if_unfit(self, X, output_score):
         X = _check_X_input(X)
-        if not self._different_arm_priors:
+        if (not self._different_arm_priors) and (not isinstance(self.smoothing, np.ndarray)):
             pred = self._name_arms(self.random_state.integers(self.nchoices, size = X.shape[0]))
             score = np.repeat(1. / self.nchoices, X.shape[0])
         else:
-            pred = self._predict_from_beta_prior(X.shape[0])
+            pred = self._predict_from_beta_prior_and_smoothing(X.shape[0])
             score = np.max(pred, axis=1)
             pred = self._name_arms(np.argmax(pred, axis=1))
         if not output_score:
