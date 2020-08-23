@@ -41,6 +41,7 @@ class _BasePolicy:
         self.njobs = _check_njobs(njobs)
         self.batch_train, self.assume_unique_reward = _check_bools(batch_train, assume_unique_reward)
         self._no_beta_prior = beta_prior is None
+        self._different_arm_priors = isinstance(beta_prior, list)
         self.beta_prior = _check_beta_prior(beta_prior, self.nchoices, prior_def_ucb)
         self._beta_prior_by_arm = _beta_prior_by_arm(self.beta_prior, self.nchoices)
         self.random_state = _check_random_state(random_state)
@@ -374,6 +375,7 @@ class _BasePolicy:
         self._beta_prior_by_arm[1] = np.append(self._beta_prior_by_arm[1], beta_prior[0][1])
         self._beta_prior_by_arm[2] = np.append(self._beta_prior_by_arm[2], beta_prior[1])
 
+    ### TODO: add option for refitting only the arms that have new observations here
     def fit(self, X, a, r, warm_start=False):
         """
         Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
@@ -477,21 +479,37 @@ class _BasePolicy:
         """
         X = _check_X_input(X)
         if not self.is_fitted:
-            warnings.warn("Model object has not been fit to data, predictions will be random.")
-            return self.random_state.random(size=(X.shape[0], self.nchoices))
+            if not self._different_arm_priors:
+                return self.random_state.random(size=(X.shape[0], self.nchoices))
+            else:
+                return self._predict_from_beta_prior(X.shape[0])
         return self._score_matrix(X)
 
+    def _predict_from_beta_prior(self, n):
+        pred = np.empty((n, self.nchoices), dtype=np.float64, order="F")
+        for choice in range(self.nchoices):
+            pred[:, choice] = self.random_state.beta(self._beta_prior_by_arm[0][choice],
+                                                     self._beta_prior_by_arm[1][choice],
+                                                     size=n)
+        return pred
+
+    ### TODO: add option to incorporate magnitude of rewards per arm (e.g. bid per click)
     def _score_matrix(self, X):
         return self._oracles.decision_function(X)
 
     def _predict_random_if_unfit(self, X, output_score):
-        warnings.warn("Model object has not been fit to data, predictions will be random.")
         X = _check_X_input(X)
-        pred = self._name_arms(self.random_state.integers(self.nchoices, size = X.shape[0]))
+        if not self._different_arm_priors:
+            pred = self._name_arms(self.random_state.integers(self.nchoices, size = X.shape[0]))
+            score = np.repeat(1. / self.nchoices, X.shape[0])
+        else:
+            pred = self._predict_from_beta_prior(X.shape[0])
+            score = np.max(pred, axis=1)
+            pred = self._name_arms(np.argmax(pred, axis=1))
         if not output_score:
             return pred
         else:
-            return {"choice" : pred, "score" : (1.0 / self.nchoices) * np.ones(size = X.shape[0], dtype = "float64")}
+            return {"choice" : pred, "score" : score}
 
     def topN(self, X, n):
         """
