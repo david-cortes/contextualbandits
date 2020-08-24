@@ -50,7 +50,7 @@ class LinearRegression(BaseEstimator):
         to Sherman-Morrison).
     calc_inv : bool
         When using ``method='chol'``, whether to also produce a matrix inverse, which
-        is required for using the LinUCB and LinTS prediction modes. Ignored when
+        is required for using the LinUCB prediction mode. Ignored when
         passing ``method='sm'`` (the default). Note that is is possible to change
         the method after the object has already been fit.
     use_float : bool
