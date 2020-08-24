@@ -705,6 +705,7 @@ class _OneVsRest:
                  force_fit=False, force_counters=False,
                  prev_ovr=None, warm=False,
                  force_unfit_predict=False,
+                 arms_to_update=None,
                  njobs=1):
         self.n = n
         self.smooth = smooth
@@ -783,7 +784,7 @@ class _OneVsRest:
         else:
             Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")\
                     (delayed(self._full_fit_single)\
-                            (choice, X, a, r) for choice in range(self.n))
+                            (choice, X, a, r, arms_to_update) for choice in range(self.n))
 
     def _drop_arm(self, drop_ix, alpha, beta, thr):
         del self.algos[drop_ix]
@@ -851,7 +852,7 @@ class _OneVsRest:
             if (self.beta_counters[1, choice] > self.thr[choice]) and (self.beta_counters[2, choice] > self.thr[choice]):
                 self.beta_counters[0, choice] = 1
 
-    def _full_fit_single(self, choice, X, a, r):
+    def _full_fit_single(self, choice, X, a, r, arms_to_update):
         yclass, this_choice = self._filter_arm_data(X, a, r, choice)
         n_pos = (yclass > 0.).sum()
         if self.smooth is not None:
@@ -870,8 +871,10 @@ class _OneVsRest:
             if not self.force_fit:
                 self.algos[choice] = _OnePredictor()
                 return None
-        xclass = X[this_choice, :]
-        self.algos[choice].fit(xclass, yclass)
+
+        if (arms_to_update is None) or (choice in arms_to_update):
+            xclass = X[this_choice, :]
+            self.algos[choice].fit(xclass, yclass)
 
         if (self.force_counters) or (self.thr[choice] > 0 and not self.force_fit):
             self._update_beta_counters(yclass, choice)

@@ -375,9 +375,8 @@ class _BasePolicy:
         self._beta_prior_by_arm[1] = np.append(self._beta_prior_by_arm[1], beta_prior[0][1])
         self._beta_prior_by_arm[2] = np.append(self._beta_prior_by_arm[2], beta_prior[1])
 
-    ### TODO: add option for refitting only the arms that have new observations here
     ### TODO: add option for automatically adding new arms if they appear in the data
-    def fit(self, X, a, r, warm_start=False):
+    def fit(self, X, a, r, warm_start=False, continue_from_last=False):
         """
         Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
 
@@ -401,6 +400,15 @@ class _BasePolicy:
             Dropping arms will make this functionality unavailable.
             This options is not available for 'BootstrappedUCB',
             nor for 'BootstrappedTS'.
+        continue_from_last : bool
+            If the policy was previously fit to data, whether to assume that
+            this new call to 'fit' will continue from the exact same dataset as before
+            plus new rows appended at the end of 'X', 'a', 'r'. In this case,
+            will only refit the models that have new data according to 'a'.
+            Note that the bootstrapped policies will still benefit from extra refits.
+            This option should not be used when there are calls to 'partial_fit' between
+            calls to fit.
+            Ignored if using ``assume_unique_reward=True``.
 
         Returns
         -------
@@ -408,7 +416,19 @@ class _BasePolicy:
             This object
         """
         X, a, r = _check_fit_input(X, a, r, self.choice_names)
+        if X.shape[0] == 0:
+            return self
+
         use_warm = warm_start and self.has_warm_start and self.is_fitted
+        continue_from_last = False if not self.is_fitted else continue_from_last
+        continue_from_last = False if self.assume_unique_reward else continue_from_last
+        if continue_from_last:
+            if X.shape[0] <= self._obs_to_fit:
+                raise ValueError("X contains less rows than in the last call to 'fit'.")
+            arms_to_update = np.unique(a[self._obs_to_fit:])
+        else:
+            arms_to_update = None
+
         self._oracles = _OneVsRest(self.base_algorithm,
                                    X, a, r,
                                    self.nchoices,
@@ -426,7 +446,9 @@ class _BasePolicy:
                                    prev_ovr = self._oracles if self.is_fitted else None,
                                    warm = use_warm,
                                    force_unfit_predict = self.force_unfit_predict,
+                                   arms_to_update = arms_to_update,
                                    njobs = self.njobs)
+        self._obs_to_fit = X.shape[0]
         self.is_fitted = True
         return self
     
@@ -1662,6 +1684,8 @@ class _ActivePolicy(_BasePolicy):
         return self
 
 
+### TODO: add option to take the argmax with probability proportional to
+### the maximum prediction times a constant
 class AdaptiveGreedy(_ActivePolicy):
     """
     Adaptive Greedy
