@@ -2029,6 +2029,7 @@ class AdaptiveGreedy(_ActivePolicy):
 
     def _calc_preds(self, X, choose = True):
         pred_proba = self._oracles.decision_function(X)
+        np.nan_to_num(pred_proba, copy=False)
         pred_max = pred_proba.max(axis = 1)
         if choose:
             pred = np.argmax(pred_proba, axis = 1)
@@ -2760,6 +2761,7 @@ class SoftmaxExplorer(_BasePolicy):
             pred *= self.multiplier
             if self.inflation_rate is not None:
                 self.multiplier *= self.inflation_rate ** pred.shape[0]
+        np.nan_to_num(pred, copy=False)
         _apply_softmax(pred)
         return pred
 
@@ -3030,7 +3032,8 @@ class LinTS(LinUCB):
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
-        very large.
+        very large, and that it is more prone to suffer from numeric precision
+        problems compared to its UCB counterpart.
     method : str, one of 'chol' or 'sm'
         Method used to fit the model. Options are:
 
@@ -3103,7 +3106,7 @@ class LinTS(LinUCB):
            International Conference on Machine Learning. 2013.
     """
     def __init__(self, nchoices, v_sq=1.0, sample_from="coef", lambda_=1.0, fit_intercept=True,
-                 sample_unique=False, use_float=True, method="sm",
+                 sample_unique=False, use_float=False, method="sm",
                  beta_prior=None, smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs = 1):
         assert sample_from in ["coef", "ci"]

@@ -465,6 +465,7 @@ class LinearRegression(BaseEstimator):
                     cov[np.arange(n), np.arange(n)] += 1e-1
                     if np.linalg.det(cov) >= tol:
                         break
+                np.nan_to_num(cov, copy=False)
 
 
 
