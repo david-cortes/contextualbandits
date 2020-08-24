@@ -3053,6 +3053,7 @@ class LinTS(LinUCB):
         approach which is theoretically wrong, but as sampling coefficients
         can be very slow, using 'False' can provide a reasonable speed up
         without much of a performance penalty.
+        Ignored when passing ``sample_from="ci"``.
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
@@ -3074,7 +3075,8 @@ class LinTS(LinUCB):
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
 
-        If using ``sample_from="ci"``, it's highly recommended to pass "chol" here.
+        If using ``sample_from="coef"``, it's highly recommended to pass "chol" here
+        as it will be faster and have higher numeric precision.
     beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a

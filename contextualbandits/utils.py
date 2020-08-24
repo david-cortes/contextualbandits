@@ -852,6 +852,8 @@ class _OneVsRest:
             if (self.beta_counters[1, choice] > self.thr[choice]) and (self.beta_counters[2, choice] > self.thr[choice]):
                 self.beta_counters[0, choice] = 1
 
+    ### TODO: refactor this to make better usage of 'arms_to_update' and avoid
+    ### having to use shared memory
     def _full_fit_single(self, choice, X, a, r, arms_to_update):
         yclass, this_choice = self._filter_arm_data(X, a, r, choice)
         n_pos = (yclass > 0.).sum()

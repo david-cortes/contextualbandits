@@ -68,6 +68,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
+* Can now pass per-arm smoothing and beta_prior hyperparameters.
 * Can now work with sparse matrices in CSR format.
 * Added functionality for ranking top-N arms instead of always picking the single best one.
 * Added tree-based partitioned UCB and TS.
