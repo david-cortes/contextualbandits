@@ -424,6 +424,11 @@ def update_matrices_noinv(
     cdef np.ndarray[realtp, ndim=1] Xsum
     cdef np.ndarray[realtp, ndim=2] Xw
 
+    ### Note: in theory, can use X as either row-major or column-major,
+    ### but then would have to keep track of whether XtX if upper or lower triangular,
+    ### since it will produce different structures according to X.
+    X = np.require(X, dtype=X.dtype, requirements=["F_CONTIGUOUS"])
+
     cdef CBLAS_ORDER x_ord = CblasRowMajor if not np.isfortran(X) else CblasColMajor
     if Xcsr is None:
         if w.shape[0] == 0:
@@ -739,3 +744,46 @@ def get_matrix_inv(
         memcpy(ptr_invX, ptr_X, <size_t>(X.shape[0]*X.shape[1])*sizeof(realtp))
         tpotrf(&lo, &n, ptr_invX, &n, &ignore)
         tpotri(&lo, &n, ptr_invX, &n, &ignore)
+
+## https://stats.stackexchange.com/questions/175271/can-i-get-a-cholesky-decomposition-from-the-inverse-of-a-matrix
+def mvnorm_from_invcov(
+        np.ndarray[realtp, ndim=1] mu,
+        np.ndarray[realtp, ndim=2] invSigma,
+        size_t size,
+        rng
+    ):
+    
+    ### First calculate eigen values and eigen vectors
+    cdef int m = invSigma.shape[0]
+    cdef np.ndarray[realtp, ndim=2] eig_Vecs = invSigma.copy()
+    cdef np.ndarray[realtp, ndim=1] eig_vals = np.empty(m, dtype=C_realtp)
+    cdef realtp *ptr_Ev = &eig_Vecs[0,0]
+    cdef realtp *ptr_ev = &eig_vals[0]
+
+    cdef char lo = 'L'
+    cdef int one = 1
+    cdef int minus_one = -1
+    cdef char V = 'V'
+    cdef int ignore
+    cdef realtp size_buffer
+
+    tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &size_buffer, &minus_one, &ignore)
+    cdef int size_buffer_as_int = int(size_buffer)
+    cdef np.ndarray[realtp, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_realtp)
+    tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &buffer_arr[0], &size_buffer_as_int, &ignore)
+
+    ### Note: the obtained eigen values are transposed at this point as they were passed
+    ### assuming column-major (input was a symmetric matrix so it doesn't matter).
+    ### If doing the rest of this part in C, would have to use tscal with incX given by
+    ### the number of columns
+
+    ### Now use the formula
+    cdef size_t n = mu.shape[0]
+    if isinstance(rng, np.random.Generator):
+        sample_stdnorm = rng.standard_normal(size=(n, m), dtype=C_realtp)
+    else:
+        sample_stdnorm = rng.normal(size=(n, m)).astype(C_realtp)
+    return mu + np.dot(
+        sample_stdnorm,
+        np.einsum("ij,i->ij", eig_Vecs, np.sqrt(1. / eig_vals))
+    )

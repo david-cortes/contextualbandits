@@ -376,6 +376,7 @@ class _BasePolicy:
         self._beta_prior_by_arm[2] = np.append(self._beta_prior_by_arm[2], beta_prior[1])
 
     ### TODO: add option for refitting only the arms that have new observations here
+    ### TODO: add option for automatically adding new arms if they appear in the data
     def fit(self, X, a, r, warm_start=False):
         """
         Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
@@ -464,6 +465,7 @@ class _BasePolicy:
             return self.fit(X, a, r)
     
     ### TODO: add option for passing a list of arms instead of predicting all
+    ### TODO: add option for making predictions on unseen arms according to beta_prior/smoothing
     def decision_function(self, X):
         """
         Get the scores for each arm following this policy's action-choosing criteria.
@@ -1156,7 +1158,7 @@ class LogisticTS(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, sample_from="ci", ci_from_empty=False, multiplier=1.0,
+    def __init__(self, nchoices, sample_from="ci", ci_from_empty=False, multiplier=0.1,
                  fit_intercept=True, lambda_=1.0, sample_unique=False,
                  beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
@@ -2923,7 +2925,7 @@ class LinUCB(_BasePolicyWithExploit):
         base = _LinUCB_n_TS_single(alpha=self.alpha, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
-                                   ts=False)
+                                   ts=False, ts_from_ci=False)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=True,
@@ -3005,6 +3007,12 @@ class LinTS(LinUCB):
         custom name.
     v_sq : float
         Parameter by which to multiply the covariance matrix (more means higher variance).
+        It is recommended to decrease it from the default value of 1.
+    sample_from : str, one of "coef", "ci"
+        Whether to make predictions by sampling the model coefficients or by
+        sampling the predicted value from an interval centered around the coefficients.
+        If sampling from the coefficients, it's highly recommended to use ``method="chol"``
+        as it will be faster and more precise.
     lambda_ : float > 0
         Regularization parameter. References assumed this would always be equal to 1, but this
         implementation allows to change it.
@@ -3038,6 +3046,8 @@ class LinTS(LinUCB):
             a matrix inverse. This is likely to be faster when fitting the model
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
+
+        If using ``sample_from="ci"``, it's highly recommended to pass "chol" here.
     beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
@@ -3092,16 +3102,18 @@ class LinTS(LinUCB):
            "Thompson sampling for contextual bandits with linear payoffs."
            International Conference on Machine Learning. 2013.
     """
-    def __init__(self, nchoices, v_sq=1.0, lambda_=1.0, fit_intercept=True,
+    def __init__(self, nchoices, v_sq=1.0, sample_from="coef", lambda_=1.0, fit_intercept=True,
                  sample_unique=False, use_float=True, method="sm",
                  beta_prior=None, smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs = 1):
+        assert sample_from in ["coef", "ci"]
         self._ts = True
         self._add_common_lin(v_sq, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.v_sq, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
-                                   ts=True, sample_unique=sample_unique)
+                                   ts=True, ts_from_ci=(sample_from == "ci"),
+                                   sample_unique=sample_unique)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False)

@@ -14,7 +14,8 @@ from scipy.linalg.cython_blas cimport (
 from scipy.linalg.cython_lapack cimport (
     dposv as tposv,
     dpotri as tpotri,
-    dpotrf as tpotrf
+    dpotrf as tpotrf,
+    dsyev as tsyev
     )
 
 ctypedef double realtp

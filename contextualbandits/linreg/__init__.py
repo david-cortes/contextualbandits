@@ -341,8 +341,9 @@ class LinearRegression(BaseEstimator):
         ----------
         X : array(m,n) or CSR matrix(m, n)
             The covariates.
-        alpha : float > 0
-            The multiplier for the width of the bound.
+        alpha : float > 0 or array(m, ) > 0
+            The multiplier for the width of the bound. Can also pass an array
+            with different values for each row.
         add_unfit_noise : bool
             When making predictions with an unfit model (in this case they are
             given by empty zero matrices except for the inverse diagonal matrix
@@ -366,10 +367,13 @@ class LinearRegression(BaseEstimator):
         .. [1] Chu, Wei, et al. "Contextual bandits with linear payoff functions."
                Proceedings of the Fourteenth International Conference on Artificial Intelligence and Statistics. 2011.
         """
-        assert alpha > 0.
-        if isinstance(alpha, int):
-            alpha = float(alpha)
-        assert isinstance(alpha, float)
+        if not isinstance(alpha, np.ndarray):
+            assert alpha > 0.
+            if isinstance(alpha, int):
+                alpha = float(alpha)
+            assert isinstance(alpha, float)
+        else:
+            assert alpha.shape[0] == X.shape[0]
 
         if (self.method == "chol") and (not self.calc_inv):
             raise ValueError("Not available when using 'method=\"chol\"' and 'calc_inv=False'.")
@@ -401,6 +405,10 @@ class LinearRegression(BaseEstimator):
         If using this method, it's recommended to center the 'X' data passed
         to 'fit' and 'partial_fit'. If not centered, it's recommendable to
         lower the ``v_sq`` value.
+
+        Note
+        ----
+        It's highly recommended to use ``method="chol"`` if using this functionality.
 
         Parameters
         ----------
@@ -443,29 +451,33 @@ class LinearRegression(BaseEstimator):
             v_sq = float(v_sq)
         assert isinstance(v_sq, float)
 
-        if (self.method == "chol") and (not self.calc_inv):
-            raise ValueError("Not available when using 'method=\"chol\"' and 'calc_inv=False'.")
+        cy_funs = _wrapper_float if self._use_float else _wrapper_double
+        random_state = np.random if random_state is None else random_state
 
-        tol = 1e-20
-        if np.linalg.det(self._invXtX) >= tol:
-            cov = self._invXtX
-        else:
-            cov = self._invXtX.copy()
-            n = cov.shape[1]
-            for i in range(10):
-                cov[np.arange(n), np.arange(n)] += 1e-1
-                if np.linalg.det(cov) >= tol:
-                    break
+        if self.method != "chol":
+            tol = 1e-20
+            if np.linalg.det(self._invXtX) >= tol:
+                cov = self._invXtX
+            else:
+                cov = self._invXtX.copy()
+                n = cov.shape[1]
+                for i in range(10):
+                    cov[np.arange(n), np.arange(n)] += 1e-1
+                    if np.linalg.det(cov) >= tol:
+                        break
+
+
 
         if sample_unique:
-            if random_state is None:
-                coef = np.random.multivariate_normal(mean=self.coef_,
-                                                     cov=v_sq * cov,
-                                                     size=X.shape[0])
-            else:
+            if self.method != "chol":
                 coef = random_state.multivariate_normal(mean=self.coef_,
                                                         cov=v_sq * cov,
                                                         size=X.shape[0])
+            else:
+                coef = cy_funs.mvnorm_from_invcov(self.coef_,
+                                                  (1./v_sq) * self._XtX,
+                                                  size=X.shape[0],
+                                                  rng=random_state)
             if not issparse(X):
                 pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
             else:
@@ -473,12 +485,15 @@ class LinearRegression(BaseEstimator):
             if self.fit_intercept:
                 pred[:] += coef[:,-1]
         else:
-            if random_state is None:
-                coef = np.random.multivariate_normal(mean=self.coef_,
-                                                     cov=v_sq * cov)
-            else:
+            if self.method != "chol":
                 coef = random_state.multivariate_normal(mean=self.coef_,
                                                         cov=v_sq * cov)
+            else:
+                coef = cy_funs.mvnorm_from_invcov(self.coef_,
+                                                  (1./v_sq) * self._XtX,
+                                                  size=1,
+                                                  rng=random_state)
+                coef = coef.reshape(-1)
             pred = X.dot(coef[:X.shape[1]])
             if self.fit_intercept:
                 pred[:] += coef[-1]

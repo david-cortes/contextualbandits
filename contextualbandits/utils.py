@@ -1022,7 +1022,7 @@ class _OneVsRest:
 
 class _LinUCB_n_TS_single:
     def __init__(self, alpha=1.0, lambda_=1.0, fit_intercept=True,
-                 use_float=True, method="sm", ts=False,
+                 use_float=True, method="sm", ts=False, ts_from_ci=False,
                  sample_unique=False, random_state=1):
         self.alpha = alpha
         self.lambda_ = lambda_
@@ -1030,6 +1030,7 @@ class _LinUCB_n_TS_single:
         self.use_float = use_float
         self.method = method
         self.ts = ts
+        self.ts_from_ci = ts_from_ci
         self.sample_unique = bool(sample_unique)
         self.random_state = _check_random_state(random_state)
         self.is_fitted = False
@@ -1058,8 +1059,13 @@ class _LinUCB_n_TS_single:
             return self.model.predict_ucb(X, self.alpha, add_unfit_noise=True,
                                           random_state=self.random_state)
         else:
-            return self.model.predict_thompson(X, self.alpha, self.sample_unique,
-                                               self.random_state)
+            if not self.ts_from_ci:
+                return self.model.predict_thompson(X, self.alpha, self.sample_unique,
+                                                   self.random_state)
+            else:
+                rnd = self.random_state.normal(size=X.shape[0], scale=self.alpha)
+                return self.model.predict_ucb(X, rnd, add_unfit_noise=True,
+                                              random_state=self.random_state)
 
     def exploit(self, X):
         if not self.is_fitted:
@@ -1111,7 +1117,11 @@ class _LogisticUCB_n_TS_single:
             add_bias=self.fit_intercept,
             overwrite=1
         )
-        _matrix_inv_symm(self.Sigma, self.lambda_)
+        ### It's faster to sample coefficients from an inverse-covariance matrix
+        ### For TS-coef, 'Sigma' will be the inverse of the variance-covariance of the predictors,
+        ### For UCB and TS-ci, will be the variance-covariance matrix of the predictors
+        if not (self.ts and not self.ts_from_ci):
+            _matrix_inv_symm(self.Sigma, self.lambda_)
         self.is_fitted = True
 
     def _process_X(self, X):
@@ -1142,7 +1152,7 @@ class _LogisticUCB_n_TS_single:
             pred = self.model.decision_function(X)
             X, Xcsr = self._process_X(X)
             se_sq = _wrapper_double.x_A_x_batch(X, self.Sigma, Xcsr, self.fit_intercept, 1)
-            pred[:] += self.random_state.normal(size=X.shape[0]) * np.sqrt(se_sq.reshape(-1))
+            pred[:] += self.random_state.normal(size=X.shape[0], scale=self.m) * np.sqrt(se_sq.reshape(-1))
             _apply_sigmoid(pred)
             return pred
 
@@ -1153,21 +1163,11 @@ class _LogisticUCB_n_TS_single:
             else:
                 coef = self.model.coef_.reshape(-1)
 
-            tol = 1e-20
-            if np.linalg.det(self.Sigma) >= tol:
-                cov = self.Sigma
-            else:
-                cov = self.Sigma.copy()
-                n = cov.shape[1]
-                for i in range(10):
-                    cov[np.arange(n), np.arange(n)] += 1e-1
-                    if np.linalg.det(cov) >= tol:
-                        break
-
             if self.sample_unique:
-                coef = self.random_state.multivariate_normal(mean=coef,
-                                                             cov=self.m * cov,
-                                                             size=X.shape[0])
+                coef = _wrapper_double.mvnorm_from_invcov(coef,
+                                                          (1./self.m) * self.Sigma,
+                                                          size=X.shape[0],
+                                                          rng=self.random_state)
                 if not issparse(X):
                     pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
                 else:
@@ -1178,8 +1178,11 @@ class _LogisticUCB_n_TS_single:
                 if self.fit_intercept:
                     pred[:] += coef[:,-1]
             else:
-                coef = self.random_state.multivariate_normal(mean=coef,
-                                                             cov=self.m * cov)
+                coef = _wrapper_double.mvnorm_from_invcov(coef,
+                                                          (1./self.m) * self.Sigma,
+                                                          size=1,
+                                                          rng=self.random_state)
+                coef = coef.reshape(-1)
                 pred = X.dot(coef[:X.shape[1]])
                 if not isinstance(pred, np.ndarray):
                     pred = np.array(pred).reshape(-1)
