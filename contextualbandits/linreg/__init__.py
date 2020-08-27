@@ -14,6 +14,9 @@ class LinearRegression(BaseEstimator):
     needed to obtain the closed-form solution in a way that calling 'partial_fit'
     multiple times would be equivalent to a single call to 'fit' with all the data.
 
+    Also provides functionality for making predictions according to upper confidence
+    bound (UCB) and to Thompson sampling criteria.
+
     Note
     ----
     Doing linear regression this way requires both memory and computation time
@@ -53,6 +56,39 @@ class LinearRegression(BaseEstimator):
         is required for using the LinUCB prediction mode. Ignored when
         passing ``method='sm'`` (the default). Note that is is possible to change
         the method after the object has already been fit.
+    precompute_ts : bool
+        Whether to pre-compute the necessary matrices to accelerate the Thompson
+        sampling prediction mode (method ``predict_thompson``). If you plan to use
+        ``predict_thompson``, it's recommended to pass "True".
+        Note that this will make the Sherman-Morrison updates (``method="sm"``)
+        much slower as it will calculate eigenvalues after every update.
+        Can be changed after the object is already initialized or fitted.
+    precompute_ts_multiplier : float
+        Multiplier for the covariance matrix to use when using ``precompute_ts``.
+        Calling ``predict_thompson`` with this same multiplier will be faster than
+        with a different one. Calling it with a different multiplier with
+        ``precompute_ts`` will still be faster than without it, unless using
+        also ``n_presampled``.
+        Ignored when passing ``precompute_ts=False``.
+    n_presampled : None or int
+        When passing ``precompute_ts``, this denotes a number of coefficients to pre-sample
+        after calling 'fit' and/or 'partial_fit', which will be used later
+        when calling ``predict_thompson`` with the same multiplier as in ``precompute_ts_multiplier``.
+        Pre-sampling a large number of coefficients can help to speed up Thompson-sampled predictions
+        at the expense of longer fitting times, and is recommended if there is a large number of
+        predictions between calls to 'fit' or 'partial_fit'.
+        If passing 'None' (the default), will not pre-sample a finite number of the coefficients
+        at fitting time, but will rather sample (different) coefficients in calls to
+        ``predict_thompson``.
+        The pre-sampled coefficients will not be used if calling ``predict_thompson`` with
+        a different multiplier than what was passed to ``precompute_ts_multiplier``.
+    rng_presample : None, int, RandomState, or Generator
+        Random number generator to use for pre-sampling coefficients.
+        If passing an integer, will use it as a random seed for initialization. If passing
+        a RandomState, will use it to draw an integer to use as seed. If passing a
+        Generator, will use it directly. If passing 'None', will initialize a Generator
+        without random seed.
+        Ignored if passing ``precompute_ts=False`` or ``n_presampled=None`` (the defaults).
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
@@ -69,12 +105,19 @@ class LinearRegression(BaseEstimator):
         The obtained coefficients. If passing 'fit_intercept=True', the intercept
         will be at the last entry.
     """
-    def __init__(self, lambda_=1., fit_intercept=True, method="sm", calc_inv=True,
+    def __init__(self, lambda_=1., fit_intercept=True, method="sm",
+                 calc_inv=True, precompute_ts=False,
+                 precompute_ts_multiplier=1.,
+                 n_presampled=None, rng_presample=None,
                  use_float=True, copy_X=True):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
         self._method = method
         self._calc_inv = bool(calc_inv)
+        self._precompute_ts = bool(precompute_ts)
+        self._precompute_ts_multiplier = precompute_ts_multiplier
+        self._n_presampled = n_presampled
+        self.rng_presample = rng_presample
         self._use_float = bool(use_float)
         self.copy_X = bool(copy_X)
 
@@ -85,6 +128,12 @@ class LinearRegression(BaseEstimator):
         self._XtY = np.empty(0, dtype=self._dtype)
         self._bufferX = np.empty(0, dtype=self._dtype)
         self._n = 0
+
+        ### These are only used alongside precomputed TS
+        self._EigMultiplier = np.empty((0,0), dtype=self._dtype)
+        self._EigValsUsed = np.empty(0, dtype=self._dtype)
+        self._EigValsOrig = np.empty(0, dtype=self._dtype)
+        self._coef_precomputed = np.empty((0,0), dtype=self._dtype)
 
         self.is_fitted_ = False
 
@@ -102,6 +151,14 @@ class LinearRegression(BaseEstimator):
                 self._XtY = self._XtY.astype(self._dtype)
             if self._bufferX.dtype != self._dtype:
                 self._bufferX = self._bufferX.astype(self._dtype)
+            if self._EigMultiplier.dtype != self._dtype:
+                self._EigMultiplier = self._EigMultiplier.astype(self._dtype)
+            if self._EigValsUsed.dtype != self._dtype:
+                self._EigValsUsed = self._EigValsUsed.astype(self._dtype)
+            if self._EigValsOrig.dtype != self._dtype:
+                self._EigValsOrig = self._EigValsOrig.astype(self._dtype)
+            if self._coef_precomputed.dtype != self._dtype:
+                self._coef_precomputed = self._coef_precomputed.astype(self._dtype)
 
     @property
     def use_float(self):
@@ -118,7 +175,7 @@ class LinearRegression(BaseEstimator):
     @method.setter
     def method(self, value):
         assert value in ["chol", "sm"]
-        if self._method != value:
+        if (self._method != value) and (self.is_fitted_):
             cy_funs = _wrapper_float if self._use_float else _wrapper_double
             if self._method == "sm":
                 self._XtX = np.empty(self._invXtX.shape, dtype=self._dtype)
@@ -135,12 +192,101 @@ class LinearRegression(BaseEstimator):
     
     @calc_inv.setter
     def calc_inv(self, value):
-        if bool(value) != self._calc_inv:
+        if bool(value) != bool(self._calc_inv):
             if self._method == "chol":
                 self._invXtX = np.empty(self._XtX.shape, dtype=self._dtype)
-                cy_funs.get_matrix_inv(self._XtX, self._invXtX)
+                if self.is_fitted_:
+                    cy_funs = _wrapper_float if self._use_float else _wrapper_double
+                    cy_funs.get_matrix_inv(self._XtX, self._invXtX)
             self._calc_inv = bool(value)
 
+    @property
+    def precompute_ts(self):
+        return self._precompute_ts
+    
+    @precompute_ts.setter
+    def precompute_ts(self, value):
+        if (bool(value) != bool(self._precompute_ts)) and (self.is_fitted_):
+            ### Do not set the value right away as the procedure can
+            ### be interrupted in the middle and would leave the object
+            ### in an unusable state
+            if not value:
+                self._precompute_ts = value
+                self._EigMultiplier = np.empty((0,0), dtype=self._dtype)
+                self._EigValsUsed = np.empty(0, dtype=self._dtype)
+                self._EigValsOrig = np.empty(0, dtype=self._dtype)
+                self._coef_precomputed = np.empty((0,0), dtype=self._dtype)
+            else:
+                assert self.precompute_ts_multiplier > 0.
+                cy_funs = _wrapper_float if self._use_float else _wrapper_double
+                self._EigMultiplier, self._EigValsUsed, self._EigValsOrig = \
+                    cy_funs.get_mvnorm_multiplier(self._XtX
+                                                    if (self.method == "chol")
+                                                    else self._invXtX,
+                                                  self.precompute_ts_multiplier,
+                                                  self.method != "chol", False)
+                if self.n_presampled is not None:
+                    self._presample()
+                self._precompute_ts = value
+        else:
+            self._precompute_ts = value
+
+    @property
+    def precompute_ts_multiplier(self):
+        return float(self._precompute_ts_multiplier)
+    
+    @precompute_ts_multiplier.setter
+    def precompute_ts_multiplier(self, value):
+        if (not self._precompute_ts) or (not self.is_fitted_):
+            self._precompute_ts_multiplier = value
+        elif value != self._precompute_ts_multiplier:
+            assert value > 0.
+            if not isinstance(value, float):
+                value = float(value)
+            cy_funs = _wrapper_float if self._use_float else _wrapper_double
+            self._EigMultiplier, self._EigValsUsed = \
+                cy_funs.mvnorm_from_Eig_different_m(np.empty(0, dtype=self._dtype),
+                                                    self._EigMultiplier,
+                                                    self._EigValsUsed,
+                                                    self._EigValsOrig,
+                                                    value, 0, np.random,
+                                                    True)
+            if self.n_presampled is not None:
+                self._presample()
+            self._precompute_ts_multiplier = value
+
+    @property
+    def n_presampled(self):
+        return self._n_presampled
+    
+    @n_presampled.setter
+    def n_presampled(self, value):
+        if value != self.n_presampled:
+            if value is None:
+                self._coef_precomputed = np.empty((0,0), dtype=self._dtype)
+            else:
+                if (self.is_fitted_) and (self._precompute_ts):
+                    self._presample()
+        self.n_presampled = n_presampled
+
+    def _set_rng(self):
+        if isinstance(self.rng_presample, np.random.RandomState):
+            self.rng_presample = self.rng_presample.randint(0, np.iinfo(np.int32).max)
+        if isinstance(self.rng_presample, float):
+            self.rng_presample = int(self.rng_presample)
+        if self.rng_presample is None:
+            self.rng_presample = np.random.Generator(np.random.MT19937())
+        elif isinstance(self.rng_presample, int):
+            self.rng_presample = np.random.Generator(np.random.MT19937(seed = self.rng_presample))
+
+    def _presample(self):
+        self._set_rng()
+        cy_funs = _wrapper_float if self._use_float else _wrapper_double
+        self._coef_precomputed = \
+            cy_funs.mvnorm_from_Eig(self.coef_,
+                                    self._EigMultiplier,
+                                    self._n_presampled,
+                                    self.rng_presample)
 
     def _process_X_y_w(self, X, y, sample_weight, only_X=False):
         if X.dtype != self._dtype:
@@ -221,6 +367,7 @@ class LinearRegression(BaseEstimator):
 
         """
         assert self.method in ["chol", "sm"]
+        assert self.precompute_ts_multiplier > 0
 
         self._n = X.shape[1]
         X, Xcsr, y, w = self._process_X_y_w(X, y, sample_weight)
@@ -234,6 +381,13 @@ class LinearRegression(BaseEstimator):
                     lam = self.lambda_,
                     calc_inv=(self.calc_inv) or (self.method != "chol")
                 )
+            if self._precompute_ts:
+                self._EigMultiplier, self._EigValsUsed, self._EigValsOrig = \
+                    cy_funs.get_mvnorm_multiplier(self._XtX,
+                                                  self.precompute_ts_multiplier,
+                                                  False, self.method != "chol")
+                if self.n_presampled is not None:
+                    self._presample()
         else:
             self._invXtX, self._XtY, self.coef_ = \
                 cy_funs.fit_model_inv(
@@ -241,6 +395,13 @@ class LinearRegression(BaseEstimator):
                     add_bias=self.fit_intercept,
                     lam = self.lambda_
                 )
+            if self._precompute_ts:
+                self._EigMultiplier, self._EigValsUsed, self._EigValsOrig = \
+                    cy_funs.get_mvnorm_multiplier(self._invXtX,
+                                                  self.precompute_ts_multiplier,
+                                                  True, False)
+                if self.n_presampled is not None:
+                    self._presample()
 
         if self.method != "chol":
             self._bufferX = np.empty(self._n + int(self.fit_intercept), dtype=self._dtype)
@@ -285,6 +446,13 @@ class LinearRegression(BaseEstimator):
                 add_bias=self.fit_intercept,
                 calc_inv=self.calc_inv
             )
+            if self._precompute_ts:
+                self._EigMultiplier, self._EigValsUsed, self._EigValsOrig = \
+                    cy_funs.get_mvnorm_multiplier(self._XtX,
+                                                  self.precompute_ts_multiplier,
+                                                  False, False)
+                if self.n_presampled is not None:
+                    self._presample()
         else:
             if not self._bufferX.shape[0]:
                 self._bufferX = np.empty(self._n + int(self.fit_intercept), dtype=self._dtype)
@@ -296,6 +464,13 @@ class LinearRegression(BaseEstimator):
                 X, y, w, Xcsr,
                 add_bias=self.fit_intercept,
             )
+            if self._precompute_ts:
+                self._EigMultiplier, self._EigValsUsed, self._EigValsOrig = \
+                    cy_funs.get_mvnorm_multiplier(self._invXtX,
+                                                  self.precompute_ts_multiplier,
+                                                  True, False)
+                if self.n_presampled is not None:
+                    self._presample()
         return self
 
     def predict(self, X):
@@ -406,10 +581,6 @@ class LinearRegression(BaseEstimator):
         to 'fit' and 'partial_fit'. If not centered, it's recommendable to
         lower the ``v_sq`` value.
 
-        Note
-        ----
-        It's highly recommended to use ``method="chol"`` if using this functionality.
-
         Parameters
         ----------
         X : array(m,n) or CSR matrix(m, n)
@@ -454,47 +625,102 @@ class LinearRegression(BaseEstimator):
         cy_funs = _wrapper_float if self._use_float else _wrapper_double
         random_state = np.random if random_state is None else random_state
 
-        if self.method != "chol":
-            tol = 1e-20
-            if np.linalg.det(self._invXtX) >= tol:
-                cov = self._invXtX
-            else:
-                cov = self._invXtX.copy()
-                n = cov.shape[1]
-                for i in range(10):
-                    cov[np.arange(n), np.arange(n)] += 1e-1
-                    if np.linalg.det(cov) >= tol:
-                        break
-                np.nan_to_num(cov, copy=False)
+        if not self._precompute_ts:
+            tol = 1e-15
 
-
-
-        if sample_unique:
             if self.method != "chol":
+                if np.linalg.det(self._invXtX) >= tol:
+                    inv_cov = self._invXtX
+                else:
+                    inv_cov = self._invXtX.copy()
+                    n = inv_cov.shape[1]
+                    for i in range(10):
+                        inv_cov[np.arange(n), np.arange(n)] += 1e-1
+                        if np.linalg.det(inv_cov) >= tol:
+                            break
+                    np.nan_to_num(inv_cov, copy=False)
+            else:
+                if np.linalg.det(self._XtX) >= tol:
+                    cov = self._XtX
+                else:
+                    cov = self._XtX.copy()
+                    n = cov.shape[1]
+                    for i in range(10):
+                        cov[np.arange(n), np.arange(n)] += 1e-1
+                        if np.linalg.det(cov) >= tol:
+                            break
+                    np.nan_to_num(cov, copy=False)
+
+
+
+        if self.n_presampled is not None:
+            self._set_rng()
+            ix_take = self.rng_presample.integers(self.n_presampled, size=X.shape[0], replace=True)
+            coef = self._coef_precomputed[ix_take]
+            if not issparse(X):
+                pred = np.einsum("ij,ij->i", X, coef[:, :X.shape[1]])
+            else:
+                pred = X.multiply(coef[:, :X.shape[1]]).sum(axis=1)
+            if self.fit_intercept:
+                pred[:] += coef[:, -1]
+        elif sample_unique:
+            if self._precompute_ts:
+                if np.abs(v_sq - self.precompute_ts_multiplier) <= 1e-3:
+                    coef = cy_funs.mvnorm_from_Eig(self.coef_,
+                                                   self._EigMultiplier,
+                                                   X.shape[0],
+                                                   random_state)
+                else:
+                    coef = cy_funs.mvnorm_from_Eig_different_m(self.coef_,
+                                                               self._EigMultiplier,
+                                                               self._EigValsUsed,
+                                                               self._EigValsOrig,
+                                                               v_sq,
+                                                               X.shape[0],
+                                                               random_state,
+                                                               False)
+            elif self.method == "chol":
                 coef = random_state.multivariate_normal(mean=self.coef_,
                                                         cov=v_sq * cov,
-                                                        size=X.shape[0])
+                                                        size=X.shape[0],
+                                                        method="cholesky")
             else:
                 coef = cy_funs.mvnorm_from_invcov(self.coef_,
-                                                  (1./v_sq) * self._XtX,
+                                                  (1./v_sq) * inv_cov,
                                                   size=X.shape[0],
                                                   rng=random_state)
             if not issparse(X):
-                pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
+                pred = np.einsum("ij,ij->i", X, coef[:, :X.shape[1]])
             else:
-                pred = X.multiply(coef[:,:X.shape[1]]).sum(axis=1)
+                pred = X.multiply(coef[:, :X.shape[1]]).sum(axis=1)
             if self.fit_intercept:
-                pred[:] += coef[:,-1]
+                pred[:] += coef[:, -1]
         else:
-            if self.method != "chol":
+            if self._precompute_ts:
+                if np.abs(v_sq - self.precompute_ts_multiplier) <= 1e-3:
+                    coef = cy_funs.mvnorm_from_Eig(self.coef_,
+                                                   self._EigMultiplier,
+                                                   1,
+                                                   random_state)
+                else:
+                    coef = cy_funs.mvnorm_from_Eig_different_m(self.coef_,
+                                                               self._EigMultiplier,
+                                                               self._EigValsUsed,
+                                                               self._EigValsOrig,
+                                                               v_sq,
+                                                               1,
+                                                               random_state,
+                                                               False)
+            elif self.method == "chol":
                 coef = random_state.multivariate_normal(mean=self.coef_,
-                                                        cov=v_sq * cov)
+                                                        cov=v_sq * cov,
+                                                        method="cholesky")
             else:
                 coef = cy_funs.mvnorm_from_invcov(self.coef_,
-                                                  (1./v_sq) * self._XtX,
+                                                  (1./v_sq) * inv_cov,
                                                   size=1,
                                                   rng=random_state)
-                coef = coef.reshape(-1)
+            coef = coef.reshape(-1)
             pred = X.dot(coef[:X.shape[1]])
             if self.fit_intercept:
                 pred[:] += coef[-1]

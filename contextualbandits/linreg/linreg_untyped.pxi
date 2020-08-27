@@ -745,6 +745,97 @@ def get_matrix_inv(
         tpotrf(&lo, &n, ptr_invX, &n, &ignore)
         tpotri(&lo, &n, ptr_invX, &n, &ignore)
 
+### https://stats.stackexchange.com/questions/175271/can-i-get-a-cholesky-decomposition-from-the-inverse-of-a-matrix
+### Sampling from multivariate normal N(mu, Sigma):
+### - Sample Y[n,m] ~ N(0,1)
+### - Convert to desired distribution by transforming:
+###      A = EigVec(Sigma) * diag(sqrt(EigVal(Sigma)))
+###      z = mu + Y * A
+#### (If using the inverse of Sigma, the eigen vectors are the same,
+####  while the eigen values are 1 divided over the eigen values of the inverse)
+def get_mvnorm_multiplier(
+        np.ndarray[realtp, ndim=2] Sigma,
+        realtp multiplier,
+        bint is_inverse,
+        bint overwrite_sigma
+    ):
+
+    Sigma = np.require(Sigma, dtype=C_realtp, requirements=["C_CONTIGUOUS", "OWNDATA"])
+    cdef int m = Sigma.shape[0]
+    cdef np.ndarray[realtp, ndim=2] eig_Vecs = np.empty((0,0), dtype=C_realtp)
+    if overwrite_sigma:
+        eig_Vecs = Sigma
+    else:
+        eig_Vecs = Sigma.copy()
+    cdef np.ndarray[realtp, ndim=1] eig_vals = np.empty(m, dtype=C_realtp)
+    cdef realtp *ptr_Ev = &eig_Vecs[0,0]
+    cdef realtp *ptr_ev = &eig_vals[0]
+
+    cdef char lo = 'L'
+    cdef int one = 1
+    cdef int minus_one = -1
+    cdef char V = 'V'
+    cdef int ignore
+    cdef realtp size_buffer
+
+    tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &size_buffer, &minus_one, &ignore)
+    cdef int size_buffer_as_int = int(size_buffer)
+    cdef np.ndarray[realtp, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_realtp)
+    tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &buffer_arr[0], &size_buffer_as_int, &ignore)
+
+    ### Note: the obtained eigen values are transposed at this point as they were passed
+    ### assuming column-major (input was a symmetric matrix so it doesn't matter).
+    ### If doing the rest of this part in C, would have to use tscal with incX given by
+    ### the number of columns
+
+    ### Note2: If multiplying the input matrix by a constant, the eigen vectors
+    ### remain the same, while the eigen values get multiplied by that same constant
+    if is_inverse:
+        ix_replace = eig_vals <= 1e-10
+        eig_vals[ix_replace] = 1.
+        eig_vals[:] =  1. / eig_vals
+        eig_vals[ix_replace] = 0.
+    eig_vals[:] = eig_vals.clip(min=0.)
+    eig_vals_orig = eig_vals.copy()
+    eig_vals[:] =  np.sqrt(multiplier * eig_vals)
+
+    return np.einsum("ij,i->ij", eig_Vecs, eig_vals), eig_vals, eig_vals_orig
+
+
+def mvnorm_from_Eig(
+        np.ndarray[realtp, ndim=1] mu,
+        np.ndarray[realtp, ndim=2] EigMultiplier,
+        size_t n,
+        rng
+    ):
+    cdef size_t m = EigMultiplier.shape[0]
+    cdef np.ndarray[realtp, ndim=2] X = np.empty((0,0), dtype=C_realtp)
+    if isinstance(rng, np.random.Generator):
+        X = rng.standard_normal(size=(n, m), dtype=C_realtp)
+    else:
+        X = rng.normal(size=(n, m), dtype=C_realtp).astype(C_realtp)
+    return mu + X.dot(EigMultiplier)
+
+
+def mvnorm_from_Eig_different_m(
+        np.ndarray[realtp, ndim=1] mu,
+        np.ndarray[realtp, ndim=2] EigMultiplier,
+        np.ndarray[realtp, ndim=1] eig_vals_multiplied,
+        np.ndarray[realtp, ndim=1] eig_vals_orig,
+        realtp new_m,
+        size_t n,
+        rng,
+        bint return_multiplier
+    ):
+    new_EigMultiplier = EigMultiplier / eig_vals_multiplied.reshape((-1,1))
+    new_EigMultiplier = np.einsum("ij,i->ij",
+                                  new_EigMultiplier,
+                                  np.sqrt(new_m * eig_vals_orig))
+    if return_multiplier:
+        return new_EigMultiplier, np.sqrt(new_m * eig_vals_orig)
+    else:
+        return mvnorm_from_Eig(mu, new_EigMultiplier, n, rng)
+
 ## https://stats.stackexchange.com/questions/175271/can-i-get-a-cholesky-decomposition-from-the-inverse-of-a-matrix
 def mvnorm_from_invcov(
         np.ndarray[realtp, ndim=1] mu,

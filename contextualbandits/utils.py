@@ -1028,8 +1028,8 @@ class _OneVsRest:
 class _LinUCB_n_TS_single:
     def __init__(self, alpha=1.0, lambda_=1.0, fit_intercept=True,
                  use_float=True, method="sm", ts=False, ts_from_ci=False,
-                 sample_unique=False, random_state=1):
-        self.alpha = alpha
+                 sample_unique=False, n_presampled=None, random_state=1):
+        self._alpha = alpha
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
         self.use_float = use_float
@@ -1037,13 +1037,26 @@ class _LinUCB_n_TS_single:
         self.ts = ts
         self.ts_from_ci = ts_from_ci
         self.sample_unique = bool(sample_unique)
+        self.n_presampled = n_presampled
         self.random_state = _check_random_state(random_state)
         self.is_fitted = False
         self.model = LinearRegression(lambda_=self.lambda_,
                                       fit_intercept=self.fit_intercept,
                                       method=self.method,
                                       use_float=self.use_float,
-                                      calc_inv=True)
+                                      precompute_ts=(self.ts) and (not self.ts_from_ci),
+                                      precompute_ts_multiplier=self.alpha,
+                                      n_presampled=n_presampled,
+                                      calc_inv= not ( (self.ts) and (not self.ts_from_ci) ))
+
+    @property
+    def alpha(self):
+        return self._alpha
+
+    @alpha.setter
+    def alpha(self, value):
+        self._alpha = alpha
+        self.model.precompute_ts_multiplier = alpha
 
     def fit(self, X, y):
         if X.shape[0]:
@@ -1079,7 +1092,9 @@ class _LinUCB_n_TS_single:
 
 class _LogisticUCB_n_TS_single:
     def __init__(self, lambda_=1., fit_intercept=True, alpha=0.95,
-                 m=1.0, ts=False, ts_from_ci=True, sample_unique=False, random_state=1):
+                 m=1.0, ts=False, ts_from_ci=True,
+                 sample_unique=False, n_presampled=None,
+                 random_state=1):
         self.conf_coef = alpha
         self.m = m
         self.fit_intercept = fit_intercept
@@ -1088,6 +1103,7 @@ class _LogisticUCB_n_TS_single:
         self.ts_from_ci = ts_from_ci
         self.warm_start = True
         self.sample_unique = bool(sample_unique)
+        self.n_presampled = n_presampled
         self.random_state = _check_random_state(random_state)
         self.is_fitted = False
         self.model = LogisticRegression(C=1./lambda_, penalty="l2",
@@ -1095,6 +1111,7 @@ class _LogisticUCB_n_TS_single:
                                         solver='lbfgs', max_iter=15000,
                                         warm_start=True)
         self.Sigma = np.empty((0,0), dtype=np.float64)
+        self.EigMultiplier = np.empty((0,0), dtype=np.float64)
 
     def __setattr__(self, name, value):
         if (name == "conf_coef"):
@@ -1122,10 +1139,25 @@ class _LogisticUCB_n_TS_single:
             add_bias=self.fit_intercept,
             overwrite=1
         )
-        ### It's faster to sample coefficients from an inverse-covariance matrix
-        ### For TS-coef, 'Sigma' will be the inverse of the variance-covariance of the predictors,
+        ### For TS-coef, 'Sigma' will be a transformation on the eigenvalues of the
+        ### inverse of the variance-covariance of the predictors,
         ### For UCB and TS-ci, will be the variance-covariance matrix of the predictors
-        if not (self.ts and not self.ts_from_ci):
+        if (self.ts) and (not self.ts_from_ci):
+            self.EigMultiplier, ignored, ignored_ = \
+                _wrapper_double.get_mvnorm_multiplier(self.Sigma, self.m, True, True)
+            if self.n_presampled is not None:
+                if self.fit_intercept:
+                    coef = np.r_[self.model.coef_.reshape(-1), self.model.intercept_]
+                else:
+                    coef = self.model.coef_.reshape(-1)
+                self.coef_presampled = \
+                    _wrapper_double.mvnorm_from_Eig(coef,
+                                                    self.EigMultiplier,
+                                                    self.n_presampled,
+                                                    self.random_state)
+                self.EigMultiplier = np.empty((0,0), dtype=np.float64)
+                self.Sigma = np.empty((0,0), dtype=np.float64)
+        else:
             _matrix_inv_symm(self.Sigma, self.lambda_)
         self.is_fitted = True
 
@@ -1168,25 +1200,39 @@ class _LogisticUCB_n_TS_single:
             else:
                 coef = self.model.coef_.reshape(-1)
 
-            if self.sample_unique:
-                coef = _wrapper_double.mvnorm_from_invcov(coef,
-                                                          (1./self.m) * self.Sigma,
-                                                          size=X.shape[0],
-                                                          rng=self.random_state)
+            if self.n_presampled is not None:
+                n_available = self.coef_presampled.shape[0]
+                n_take = X.shape[0]
+                ix_take = self.random_state.choice(n_available, size=n_take, replace=True)
+                coef = self.coef_presampled[ix_take]
                 if not issparse(X):
-                    pred = np.einsum("ij,ij->i", X, coef[:,:X.shape[1]])
+                    pred = np.einsum("ij,ij->i", X, coef[:, :X.shape[1]])
                 else:
                     pred = np.array(X
-                                    .multiply(coef[:,:X.shape[1]])
+                                    .multiply(coef[:, :X.shape[1]])
                                     .sum(axis=1))\
                                     .reshape(-1)
                 if self.fit_intercept:
                     pred[:] += coef[:,-1]
+            elif self.sample_unique:
+                coef = _wrapper_double.mvnorm_from_Eig(coef,
+                                                       self.EigMultiplier,
+                                                       X.shape[0],
+                                                       self.random_state)
+                if not issparse(X):
+                    pred = np.einsum("ij,ij->i", X, coef[:, :X.shape[1]])
+                else:
+                    pred = np.array(X
+                                    .multiply(coef[:, :X.shape[1]])
+                                    .sum(axis=1))\
+                                    .reshape(-1)
+                if self.fit_intercept:
+                    pred[:] += coef[:, -1]
             else:
-                coef = _wrapper_double.mvnorm_from_invcov(coef,
-                                                          (1./self.m) * self.Sigma,
-                                                          size=1,
-                                                          rng=self.random_state)
+                coef = _wrapper_double.mvnorm_from_Eig(coef,
+                                                       self.EigMultiplier,
+                                                       1,
+                                                       self.random_state)
                 coef = coef.reshape(-1)
                 pred = X.dot(coef[:X.shape[1]])
                 if not isinstance(pred, np.ndarray):

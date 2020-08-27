@@ -79,6 +79,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 * Added option to use base classifier's `warm_start` if available (for faster model fitting).
 * Added functionality for `refit_buffer` in the batch/streaming train mode (see docs for details).
 * Added a linear regression class which keeps the matrices used for the closed-form solution, so that it can be fit incrementally while giving the same solution as if fitted to all data at once.
+* LinTS and LogisticTS are faster to maker predictions due to pre-computing some of the necessary steps after fitting.
 * LinUCB speed has been improved by taking more efficient matrix operation routes and using Cython code.
 
 

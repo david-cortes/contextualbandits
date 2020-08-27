@@ -1078,7 +1078,8 @@ class LogisticTS(_BasePolicyWithExploit):
     Note
     ----
     This strategy is implemented for comparison purposes only and it's not
-    recommended to rely on it, particularly not for large datasets.
+    recommended to rely on it, particularly not for large datasets. Performance
+    tends to be very bad compared to the other methods provided here.
 
     Note
     ----
@@ -1116,6 +1117,15 @@ class LogisticTS(_BasePolicyWithExploit):
     multiplier : float
         Multiplier for the covariance matrix. Pass 1 to take it as-is.
         Ignored when passing ``sample_from='ci'``.
+    n_presampled : None or int
+        If sampling from coefficients, this denotes a number of coefficients to pre-sample
+        after calling 'fit', which will be used later in the predictions. Pre-sampling
+        a large number of coefficients can help to speed up predictions at the expense
+        of longer fitting times, and is recommended if there is a large number of predictions
+        between calls to 'fit'.
+        If passing 'None' (the default), will not pre-sample a finite number of the coefficients
+        at fitting time, but will rather sample (different) coefficients in calls to 'predict'.
+        Ignored when passing ``sample_from="ci"``.
     fit_intercept : bool
         Whether to add an intercept term to the models.
     lambda_ : float
@@ -1125,11 +1135,11 @@ class LogisticTS(_BasePolicyWithExploit):
         be made. If passing 'False', when calling 'predict', it will sample
         the same coefficients for all the observations in the same call to
         'predict', whereas if passing 'True', will use a different set of
-        coefficients for each observations. Passing 'False' leads to an
+        coefficients for each observation/row. Passing 'False' leads to an
         approach which is theoretically wrong, but as sampling coefficients
         can be very slow, using 'False' can provide a reasonable speed up
         without much of a performance penalty.
-        Ignored when passing ``sample_from='ci'``.
+        Ignored when passing ``sample_from='ci'`` or ``n_presampled``.
     beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
@@ -1180,22 +1190,26 @@ class LogisticTS(_BasePolicyWithExploit):
     .. [1] Cortes, David. "Adapting multi-armed bandits policies to contextual bandits scenarios."
            arXiv preprint arXiv:1811.04383 (2018).
     """
-    def __init__(self, nchoices, sample_from="ci", ci_from_empty=False, multiplier=0.1,
-                 fit_intercept=True, lambda_=1.0, sample_unique=False,
+    def __init__(self, nchoices, sample_from="ci", ci_from_empty=False,
+                 multiplier=0.25, n_presampled=None,
+                 fit_intercept=True, lambda_=1.0, sample_unique=True,
                  beta_prior='auto', smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs=-1):
-        warnings.warn("This class is experimental. Not recommended to rely on it.")
         assert sample_from in ["ci", "coef"]
         self.sample_from = sample_from
         assert lambda_ > 0.
         assert multiplier > 0.
+        if n_presampled is not None:
+            assert n_presampled > 0
+            assert isinstance(n_presampled, int)
         base = _LogisticUCB_n_TS_single(lambda_=lambda_,
                                         fit_intercept=fit_intercept,
                                         alpha=0.,
                                         m=multiplier,
                                         ts=True,
                                         ts_from_ci = (sample_from == "ci"),
-                                        sample_unique=sample_unique)
+                                        sample_unique=sample_unique,
+                                        n_presampled=n_presampled)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 False, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False,
@@ -3031,6 +3045,11 @@ class LinTS(LinUCB):
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
         the outputs from predict will follow these names and arms can be dropped by name, and new ones added with a
         custom name.
+    lambda_ : float > 0
+        Regularization parameter. References assumed this would always be equal to 1, but this
+        implementation allows to change it.
+    fit_intercept : bool
+        Whether to add an intercept term to the coefficients.
     v_sq : float
         Parameter by which to multiply the covariance matrix (more means higher variance).
         It is recommended to decrease it from the default value of 1.
@@ -3039,11 +3058,15 @@ class LinTS(LinUCB):
         sampling the predicted value from an interval centered around the coefficients.
         If sampling from the coefficients, it's highly recommended to use ``method="chol"``
         as it will be faster and more precise.
-    lambda_ : float > 0
-        Regularization parameter. References assumed this would always be equal to 1, but this
-        implementation allows to change it.
-    fit_intercept : bool
-        Whether to add an intercept term to the coefficients.
+    n_presampled : None or int
+        If sampling from coefficients, this denotes a number of coefficients to pre-sample
+        after calling 'fit' and/or 'partial_fit', which will be used later in the predictions. Pre-sampling
+        a large number of coefficients can help to speed up predictions at the expense
+        of longer fitting times, and is recommended if there is a large number of predictions
+        between calls to 'fit' or 'partial_fit'.
+        If passing 'None' (the default), will not pre-sample a finite number of the coefficients
+        at fitting time, but will rather sample (different) coefficients in calls to 'predict'.
+        Ignored when passing ``sample_from="ci"``.
     sample_unique : bool
         Whether to sample different coefficients each time a prediction is to
         be made. If passing 'False', when calling 'predict', it will sample
@@ -3053,7 +3076,7 @@ class LinTS(LinUCB):
         approach which is theoretically wrong, but as sampling coefficients
         can be very slow, using 'False' can provide a reasonable speed up
         without much of a performance penalty.
-        Ignored when passing ``sample_from="ci"``.
+        Ignored when passing ``sample_from="ci"`` or ``n_presampled``.
     use_float : bool
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
@@ -3075,8 +3098,9 @@ class LinTS(LinUCB):
             to small batches of observations. Be aware that with this method, it
             will add regularization to the intercept if passing 'fit_intercept=True'.
 
-        If using ``sample_from="coef"``, it's highly recommended to pass "chol" here
-        as it will be faster and have higher numeric precision.
+        Note that, even when using "sm" here, if sampling from the coefficients, it
+        will need after each update to calculate eigen values of the covariance or
+        inverse covariance matrix, so it won't be as fast as LinUCB.
     beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
@@ -3131,18 +3155,22 @@ class LinTS(LinUCB):
            "Thompson sampling for contextual bandits with linear payoffs."
            International Conference on Machine Learning. 2013.
     """
-    def __init__(self, nchoices, v_sq=1.0, sample_from="coef", lambda_=1.0, fit_intercept=True,
-                 sample_unique=False, use_float=False, method="sm",
+    def __init__(self, nchoices, lambda_=1.0, fit_intercept=True,
+                 v_sq=1.0, sample_from="coef", n_presampled=None, sample_unique=True,
+                 use_float=False, method="chol",
                  beta_prior=None, smoothing=None, noise_to_smooth=True,
                  assume_unique_reward=False, random_state=None, njobs = 1):
         assert sample_from in ["coef", "ci"]
+        if n_presampled is not None:
+            assert n_presampled > 0
+            assert isinstance(n_presampled, int)
         self._ts = True
         self._add_common_lin(v_sq, lambda_, fit_intercept, use_float, method, nchoices, njobs)
         base = _LinUCB_n_TS_single(alpha=self.v_sq, lambda_=self.lambda_,
                                    fit_intercept=self.fit_intercept,
                                    use_float=self.use_float, method=self.method,
                                    ts=True, ts_from_ci=(sample_from == "ci"),
-                                   sample_unique=sample_unique)
+                                   sample_unique=sample_unique, n_presampled=n_presampled)
         self._add_common_params(base, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 True, None, False, assume_unique_reward,
                                 random_state, assign_algo=True, prior_def_ucb=False)
