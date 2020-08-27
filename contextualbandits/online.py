@@ -2309,7 +2309,7 @@ class ExploreFirst(_ActivePolicy):
             # case 2: some predictions are within allowance, others are not
             else:
                 n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
-                pred = np.empty(X.shape[0], type = ctypes.c_double)
+                pred = np.empty(X.shape[0], dtype = ctypes.c_double)
                 pred[:n_explore] = self.random_state.integers(self.nchoices, n_explore)
                 self._choose_active(X[:n_explore], pred[:n_explore])
                 pred[n_explore:] = self._oracles.predict(X[n_explore:])
@@ -2328,7 +2328,7 @@ class ExploreFirst(_ActivePolicy):
             
             # case 2: some predictions are within allowance, others are not
             else:
-                scores = np.empty((X.shape[0], self.nchoices), type = ctypes.c_double)
+                scores = np.empty((X.shape[0], self.nchoices), dtype = ctypes.c_double)
                 scores[:n_explore] = self.random_state.random(size=(n_explore, self.nchoices))
                 self._choose_active(X[:n_explore], scores[:n_explore], choose=False)
                 scores[n_explore:] = self._oracles.decision_function(X[n_explore:])
