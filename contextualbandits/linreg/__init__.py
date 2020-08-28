@@ -653,7 +653,7 @@ class LinearRegression(BaseEstimator):
 
 
 
-        if self.n_presampled is not None:
+        if (self.n_presampled is not None) and (np.abs(v_sq - self.precompute_ts_multiplier) <= 1e-3):
             self._set_rng()
             ix_take = self.rng_presample.integers(self.n_presampled, size=X.shape[0], replace=True)
             coef = self._coef_precomputed[ix_take]
