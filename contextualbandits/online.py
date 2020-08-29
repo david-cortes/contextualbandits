@@ -212,8 +212,6 @@ class _BasePolicy:
         if isinstance(self.base_algorithm, list):
             del self.base_algorithm[drop_ix]
 
-    ## TODO: maybe add functionality to take an arm from another object of this class
-
     def add_arm(self, arm_name = None, fitted_classifier = None,
                 n_w_rew = 0, n_wo_rew = 0,
                 smoothing = None, beta_prior = None,
@@ -1842,8 +1840,8 @@ class AdaptiveGreedy(_ActivePolicy):
             * If passing a function, will take the output of it as the row-wise
               gradient norms when it compares them against other arms/classes, with
               the first column having the values if the observations were of negative
-              class, and the second column if they were positive class. The other
-              inputs to this function are the number of positive and negative examples
+              class, and the second column if they were positive class. The inputs to this
+              function (signature described above) are the number of positive and negative examples
               that have been observed, and a ``Generator`` object from NumPy to use
               for generating random numbers.
             * If passing a list, will assume each entry is a function as described
@@ -2138,7 +2136,7 @@ class ExploreFirst(_ActivePolicy):
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
         Ignored when passing ``prob_active_choice=0.``
-    case_one_class : str 'auto', 'zero', None, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
+    case_one_class : str 'auto', 'zero', None, list, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
             * If passing 'None', will assume that ``base_algorithm`` can be fit to
@@ -2151,8 +2149,8 @@ class ExploreFirst(_ActivePolicy):
             * If passing a function, will take the output of it as the row-wise
               gradient norms when it compares them against other arms/classes, with
               the first column having the values if the observations were of negative
-              class, and the second column if they were positive class. The other
-              inputs to this function are the number of positive and negative examples
+              class, and the second column if they were positive class. The inputs to this
+              function (signature described above) are the number of positive and negative examples
               that have been observed, and a ``Generator`` object from NumPy to use
               for generating random numbers.
             * If passing a list, will assume each entry is a function as described
