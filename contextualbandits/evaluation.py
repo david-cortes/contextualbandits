@@ -76,41 +76,37 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         match=pred==a
         return (np.mean(r[match]), match.sum())
     else:
-        ### TODO: this for loop approach is too slow, should instead have a
-        ### forward window to make predictions in batches and then backtrack
-        ### at the time a refit is due.
+        new_indices = np.concatenate((np.arange(start_point_online, X.shape[0]), np.arange(0, start_point_online)))
+        X,a,r = X[new_indices], a[new_indices], r[new_indices]
+        
         cum_r=0
         cum_n=0
         ix_chosen=list()
         policy.fit(X[:0], a[:0], r[:0])
-        for i in range(start_point_online, X.shape[0]):
-            obs=X[i].reshape((1,-1))
-            would_choose=policy.predict(obs)[0]
-            if would_choose==a[i]:
-                cum_r+=r[i]
-                cum_n+=1
-                ix_chosen.append(i)
-                if (cum_n%update_freq)==0:
-                    if not partial_fit:
-                        ix_fit=np.array(ix_chosen)
-                        policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
-                    else:
-                        ix_fit = np.array(ix_chosen[:-(update_freq+1):-1])
-                        policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
-        for i in range(0, start_point_online):
-            obs=X[i].reshape(1,-1)
-            would_choose=policy.predict(obs)[0]
-            if would_choose==a[i]:
-                cum_r+=r[i]
-                cum_n+=1
-                ix_chosen.append(i)
-                if (cum_n%update_freq)==0:
-                    if not partial_fit:
-                        ix_fit=np.array(ix_chosen)
-                        policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
-                    else:
-                        ix_fit = np.array(ix_chosen)[:-(update_freq+1):-1]
-                        policy.partial_fit(X[ix_fit], a[ix_fit], r[ix_fit])
+        
+        batch_size = update_freq
+        
+        for i in range(X.shape[0]//batch_size+1):
+            batch_ix = np.arange(i*batch_size, (i+1)*batch_size)
+            if batch_ix.min() > X.shape[0]-1:
+            # Occurs when X.shape[0]/batch_size is an integer
+                continue
+
+            X_batch, a_batch, r_batch = X[batch_ix], a[batch_ix], r[batch_ix]
+            
+            would_choose=policy.predict(X_batch)
+            in_sample = (would_choose==a_batch)
+            cum_r+=r_batch[in_sample].sum()
+            cum_n+=in_sample.sum()
+            
+            ix_chosen_this_batch = np.where(in_sample)[0]
+            ix_chosen.extend(i*batch_size + ix_chosen_this_batch)
+            
+            if not partial_fit:
+                ix_fit=np.array(ix_chosen)
+                policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
+            else:
+                policy.partial_fit(X_batch[ix_chosen_this_batch], a_batch[ix_chosen_this_batch], r_batch[ix_chosen_this_batch])
         if cum_n==0:
             raise ValueError("Rejection sampling couldn't obtain any matching samples.")
         return (cum_r/cum_n, cum_n)
