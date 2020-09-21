@@ -88,7 +88,10 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         policy.fit(X[:0], a[:0], r[:0])
                 
         for i in range(X.shape[0]//batch_size+1):
-            batch_ix = np.arange(i*batch_size, min((i+1)*batch_size, X.shape[0]))
+            if batch_size != 1:
+                batch_ix = np.arange(i*batch_size, min((i+1)*batch_size, X.shape[0]))
+            else:
+                batch_ix = np.array([i], dtype=int)
             if (batch_ix.shape[0] == 0) or (batch_ix[0] >= X.shape[0]):
             # Occurs when X.shape[0]/batch_size is an integer
                 break
@@ -101,7 +104,10 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
             cum_n+=in_sample.sum()
             
             ix_chosen_this_batch = np.where(in_sample)[0]
-            ix_chosen.extend(i*batch_size + ix_chosen_this_batch)
+            if batch_size != 1:
+                ix_chosen.extend(i*batch_size + ix_chosen_this_batch)
+            else:
+                ix_chosen.append(i)
             
             if not partial_fit:
                 ix_fit=np.array(ix_chosen)
