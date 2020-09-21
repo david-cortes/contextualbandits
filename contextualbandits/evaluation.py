@@ -100,20 +100,22 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
             
             would_choose=policy.predict(X_batch)
             in_sample = (would_choose==a_batch)
-            cum_r+=r_batch[in_sample].sum()
-            cum_n+=in_sample.sum()
+            n_take = in_sample.sum()
             
-            ix_chosen_this_batch = np.where(in_sample)[0]
-            if batch_size != 1:
-                ix_chosen.extend(i*batch_size + ix_chosen_this_batch)
-            else:
-                ix_chosen.append(i)
-            
-            if not partial_fit:
-                ix_fit=np.array(ix_chosen)
-                policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
-            else:
-                policy.partial_fit(X_batch[ix_chosen_this_batch], a_batch[ix_chosen_this_batch], r_batch[ix_chosen_this_batch])
+            if n_take:
+                cum_r += r_batch[in_sample].sum()
+                cum_n += n_take
+                ix_chosen_this_batch = np.where(in_sample)[0]
+                if batch_size != 1:
+                    ix_chosen.extend(i*batch_size + ix_chosen_this_batch)
+                else:
+                    ix_chosen.append(i)
+                
+                if not partial_fit:
+                    ix_fit=np.array(ix_chosen).astype(int)
+                    policy.fit(X[ix_fit], a[ix_fit], r[ix_fit])
+                else:
+                    policy.partial_fit(X_batch[ix_chosen_this_batch], a_batch[ix_chosen_this_batch], r_batch[ix_chosen_this_batch])
         if cum_n==0:
             raise ValueError("Rejection sampling couldn't obtain any matching samples.")
         return (cum_r/cum_n, cum_n)
