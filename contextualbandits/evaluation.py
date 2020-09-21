@@ -10,7 +10,7 @@ __all__ = ["evaluateRejectionSampling", "evaluateDoublyRobust",
 
 def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                               start_point_online='random', random_state=1,
-                              update_freq=10):
+                              batch_size=10):
     """
     Evaluate a policy using rejection sampling on test data.
     
@@ -45,8 +45,11 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         object (from NumPy) from which to draw an integer, or a ``Generator``
         object (from NumPy), which will be used directly.
         This is only used when passing ``start_point_online='random'``.
-    update_freq : int
-        After how many rounds to refit the policy being evaluated.
+    batch_size : int
+        Size of batches of data to take for making predictions and adding
+        observations to the history. Note that usually most of the samples
+        are rejected, thus the actual size of the batches to which the models
+        are refit are usually smaller than this number.
         Only used when passing ``online=True``.
         
     Returns
@@ -83,9 +86,7 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         cum_n=0
         ix_chosen=list()
         policy.fit(X[:0], a[:0], r[:0])
-        
-        batch_size = update_freq
-        
+                
         for i in range(X.shape[0]//batch_size+1):
             batch_ix = np.arange(i*batch_size, (i+1)*batch_size)
             if batch_ix.min() > X.shape[0]-1:
