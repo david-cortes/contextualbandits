@@ -98,7 +98,7 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
                 batch_ix = np.arange(i*batch_size, min((i+1)*batch_size, X.shape[0]))
             else:
                 batch_ix = np.array([i], dtype=int)
-            if batch_ix.min() > X.shape[0]-1::
+            if (batch_ix.shape[0] == 0) or (batch_ix[0] >= X.shape[0]):
             # Occurs when X.shape[0]/batch_size is an integer
                 break
 
