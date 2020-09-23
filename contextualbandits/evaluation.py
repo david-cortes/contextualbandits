@@ -86,13 +86,19 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         cum_n=0
         ix_chosen=list()
         policy.fit(X[:0], a[:0], r[:0])
+        
+        try:
+            from tqdm import tqdm as looper
+        except:
+            def looper(iterator, desc=None):
+                return(iterator)
                 
-        for i in range(X.shape[0]//batch_size+1):
+        for i in looper(range(X.shape[0]//batch_size+1), desc='Batches'):
             if batch_size != 1:
                 batch_ix = np.arange(i*batch_size, min((i+1)*batch_size, X.shape[0]))
             else:
                 batch_ix = np.array([i], dtype=int)
-            if (batch_ix.shape[0] == 0) or (batch_ix[0] >= X.shape[0]):
+            if batch_ix.min() > X.shape[0]-1::
             # Occurs when X.shape[0]/batch_size is an integer
                 break
 
