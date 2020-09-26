@@ -205,9 +205,11 @@ class _BasePolicy:
                 self._rand_grad_norms[:drop_ix] + self._rand_grad_norms[drop_ix + 1:]
         if isinstance(self.smoothing, np.ndarray):
             self.smoothing = np.c_[self.smoothing[:,:drop_ix], self.smoothing[:,drop_ix + 1:]]
-        self._beta_prior_by_arm[0] = np.r_[self._beta_prior_by_arm[0][:drop_ix], self._beta_prior_by_arm[0][drop_ix + 1:]]
-        self._beta_prior_by_arm[1] = np.r_[self._beta_prior_by_arm[1][:drop_ix], self._beta_prior_by_arm[1][drop_ix + 1:]]
-        self._beta_prior_by_arm[2] = np.r_[self._beta_prior_by_arm[2][:drop_ix], self._beta_prior_by_arm[2][drop_ix + 1:]]
+        self._beta_prior_by_arm = (
+            np.r_[self._beta_prior_by_arm[0][:drop_ix], self._beta_prior_by_arm[0][drop_ix + 1:]],
+            np.r_[self._beta_prior_by_arm[1][:drop_ix], self._beta_prior_by_arm[1][drop_ix + 1:]],
+            np.r_[self._beta_prior_by_arm[2][:drop_ix], self._beta_prior_by_arm[2][drop_ix + 1:]]
+        )
 
         if isinstance(self.base_algorithm, list):
             del self.base_algorithm[drop_ix]
@@ -369,9 +371,12 @@ class _BasePolicy:
             if not isinstance(beta_prior, tuple):
                 raise ValueError("'beta_prior' must be a tuple.")
             beta_prior = _check_beta_prior(beta_prior)
-        self._beta_prior_by_arm[0] = np.append(self._beta_prior_by_arm[0], beta_prior[0][0])
-        self._beta_prior_by_arm[1] = np.append(self._beta_prior_by_arm[1], beta_prior[0][1])
-        self._beta_prior_by_arm[2] = np.append(self._beta_prior_by_arm[2], beta_prior[1])
+        
+        self._beta_prior_by_arm = (
+            np.append(self._beta_prior_by_arm[0], beta_prior[0][0]),
+            np.append(self._beta_prior_by_arm[1], beta_prior[0][1]),
+            np.append(self._beta_prior_by_arm[2], beta_prior[1])
+        )
 
     ### TODO: add option for automatically adding new arms if they appear in the data
     def fit(self, X, a, r, warm_start=False, continue_from_last=False):
