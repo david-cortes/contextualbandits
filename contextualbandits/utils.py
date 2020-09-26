@@ -225,7 +225,7 @@ def _check_refit_inp(refit_buffer_X, refit_buffer_r, refit_buffer):
             msg += "when using 'refit_buffer'."
             raise ValueError(msg)
         if (refit_buffer_X is None) or (refit_buffer_r is None):
-            msg  = "'refit_buffer_X' and 'refit_buffer_y "
+            msg  = "'refit_buffer_X' and 'refit_buffer_r "
             msg += "must be passed in conjunction."
             raise ValueError(msg)
         refit_buffer_X = _check_X_input(refit_buffer_X)
