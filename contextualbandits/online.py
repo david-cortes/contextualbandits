@@ -1425,7 +1425,7 @@ class EpsilonGreedy(_BasePolicy):
         Probability of taking a random action at each round.
     decay : float (0,1)
         After each prediction, the explore probability reduces to
-        p = p*decay
+            p = p*decay
     beta_prior : str 'auto', None, tuple ((a,b), n), or list[tuple((a,b), n)]
         If not 'None', when there are less than 'n' samples with and without
         a reward from a given arm, it will predict the score for that class as a
@@ -1746,7 +1746,7 @@ class AdaptiveGreedy(_ActivePolicy):
         If None, will not take percentiles, will instead use the intial threshold and apply decay to it.
     decay : float (0,1) or None
         After each prediction, either the threshold or the percentile gets adjusted to:
-            val_t+1 = val_t*decay
+            val_{t+1} = val_t*decay
     decay_type : str, either 'percentile' or 'threshold'
         Whether to decay the threshold itself or the percentile of the predictions to take after
         each prediction. Ignored when using 'decay=None'. If passing 'percentile=None' and 'decay_type=percentile',
@@ -1824,7 +1824,9 @@ class AdaptiveGreedy(_ActivePolicy):
         If passing 'min', 'max' or 'weighted', selects them in the same way as 'ActiveExplorer'.
         Non-random active selection requires being able to calculate gradients (gradients for logistic regression and linear regression (from this package)
         are already defined with an option 'auto' below).
-    f_grad_norm : str 'auto', list, or function(base_algorithm, X, pred) -> array (n_samples, 2)
+    f_grad_norm : None, str 'auto', list, or function(base_algorithm, X, pred) -> array (n_samples, 2)
+        (When passing ``active_choice``)
+        Function that calculates the row-wise norm of the gradient from observations in X if their class were
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
         Can also use different functions for each arm, in which case it
@@ -1833,6 +1835,7 @@ class AdaptiveGreedy(_ActivePolicy):
         with stochQN's 'StochasticLogisticRegression';
         and with this package's 'LinearRegression'.
     case_one_class : str 'auto', 'zero', None, list, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
+        (When passing ``active_choice``)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
             * If passing 'None', will assume that ``base_algorithm`` can be fit to
@@ -2132,7 +2135,8 @@ class ExploreFirst(_ActivePolicy):
         function for each classifier, given that it could be either class (positive or negative)
         for the classifier that predicts each arm. If weighted, they are weighted by the same
         probability estimates from the base algorithm.
-    f_grad_norm : str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+    f_grad_norm : None, str 'auto' or function(base_algorithm, X, pred) -> array (n_samples, 2)
+        (When passing ``active_choice``)
         Function that calculates the row-wise norm of the gradient from observations in X if their class were
         negative (first column) or positive (second column).
         Can also use different functions for each arm, in which case it
@@ -2142,6 +2146,7 @@ class ExploreFirst(_ActivePolicy):
         and with this package's 'LinearRegression'.
         Ignored when passing ``prob_active_choice=0.``
     case_one_class : str 'auto', 'zero', None, list, or function(X, n_pos, n_neg, rng) -> array(n_samples, 2)
+        (When passing ``active_choice``)
         If some arm/choice/class has only rewards of one type, many models will fail to fit, and consequently the gradients
         will be undefined. Likewise, if the model has not been fit, the gradient might also be undefined, and this requires a workaround.
             * If passing 'None', will assume that ``base_algorithm`` can be fit to
