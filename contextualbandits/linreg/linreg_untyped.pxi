@@ -2,7 +2,9 @@ import numpy as np
 cimport numpy as np
 import ctypes
 from libc.string cimport memcpy, memset
+from libc.math cimport isnan, isfinite
 from cython cimport boundscheck, nonecheck, wraparound
+from libc.stdio cimport printf
 
 ctypedef enum CBLAS_ORDER:
     CblasRowMajor = 101
@@ -30,7 +32,7 @@ ctypedef enum CBLAS_SIDE:
 
 cdef void cblas_tsyrk(
         CBLAS_ORDER Order, CBLAS_UPLO Uplo, CBLAS_TRANSPOSE Trans,
-        int N, int K, realtp alpha, realtp *A, int lda, realtp beta, realtp *C, int ldc
+        int N, int K, real_t alpha, real_t *A, int lda, real_t beta, real_t *C, int ldc
     ) nogil:
     cdef char uplo
     cdef char trans
@@ -64,7 +66,7 @@ cdef void cblas_tsyrk(
 
 cdef void cblas_tgemm(
         CBLAS_ORDER Order, CBLAS_TRANSPOSE TransA, CBLAS_TRANSPOSE TransB, int M, int N, int K,
-        realtp alpha, realtp *A, int lda, realtp *B, int ldb, realtp beta, realtp *C, int ldc
+        real_t alpha, real_t *A, int lda, real_t *B, int ldb, real_t beta, real_t *C, int ldc
     ) nogil:
     cdef char transA
     cdef char transB
@@ -105,7 +107,7 @@ cdef void cblas_tgemm(
 
 cdef void cblas_tgemv(
         CBLAS_ORDER order,  CBLAS_TRANSPOSE TransA,  int m, int n,
-        realtp alpha, realtp  *a, int lda,  realtp  *x, int incx,  realtp beta,  realtp  *y, int incy
+        real_t alpha, real_t  *a, int lda,  real_t  *x, int incx,  real_t beta,  real_t  *y, int incy
     ) nogil:
     cdef char trans
     if (order == CblasColMajor):
@@ -130,9 +132,9 @@ cdef void cblas_tgemv(
 cdef void cblas_tsymv(
         CBLAS_LAYOUT layout,
         CBLAS_UPLO Uplo, int N,
-        realtp alpha, realtp  *A, int lda,
-        realtp  *X, int incX, realtp beta,
-        realtp  *Y, int incY
+        real_t alpha, real_t  *A, int lda,
+        real_t  *X, int incX, real_t beta,
+        real_t  *Y, int incY
     ) nogil:
     cdef char ul
     if (layout == CblasColMajor):
@@ -150,9 +152,9 @@ cdef void cblas_tsymv(
 cdef void cblas_tsymm(
         CBLAS_LAYOUT layout, CBLAS_SIDE Side,
         CBLAS_UPLO Uplo, int M, int N,
-        realtp alpha, realtp  *A, int lda,
-        realtp  *B, int ldb, realtp beta,
-        realtp  *C, int ldc
+        real_t alpha, real_t  *A, int lda,
+        real_t  *B, int ldb, real_t beta,
+        real_t  *C, int ldc
     ) nogil:
     cdef char sd
     cdef char ul
@@ -185,8 +187,8 @@ cdef void cblas_tsymm(
 
 cdef void cblas_tsyr(
         CBLAS_LAYOUT layout, CBLAS_UPLO Uplo,
-        int N, realtp  alpha, realtp  *X,
-        int incX, realtp  *A, int lda
+        int N, real_t  alpha, real_t  *X,
+        int incX, real_t  *A, int lda
     ) nogil:
     cdef char ul
 
@@ -205,63 +207,63 @@ cdef void cblas_tsyr(
         tsyr(&ul, &N, &alpha, X, &incX, A, &lda)
 
 
-cdef void tgemv_dense_sp(
-        realtp A[], int n_plusb,
-        realtp data[], long indptr[], long indices[], long row,
-        realtp outp[], bint add_bias
+cdef void tsymv_dense_sp(
+        real_t A[], int n_plusb,
+        real_t data[], long indptr[], long indices[], long row,
+        real_t outp[], bint add_bias
     ) nogil:
     cdef long i
     cdef long col
     cdef long rowA
-    memset(outp, 0, n_plusb*sizeof(realtp))
+    memset(outp, 0, n_plusb*sizeof(real_t))
     for rowA in range(n_plusb):
         for i in range(indptr[row], indptr[row+1]):
             col = indices[i]
             outp[rowA] += A[(col + rowA*n_plusb) if (col >= rowA) else (rowA + col*n_plusb)] * data[i]
     
     cdef int one = 1
-    cdef realtp one_realtp = 1.
+    cdef real_t one_real_t = 1.
     if add_bias:
-        taxpy(&n_plusb, &one_realtp, A + (n_plusb-1), &n_plusb, outp, &one)
+        taxpy(&n_plusb, &one_real_t, A + (n_plusb-1), &n_plusb, outp, &one)
 
-cdef realtp tdot_dense_sp(
-        realtp *dense_vec, long row,
-        realtp data[], long indptr[], long indices[]
+cdef real_t tdot_dense_sp(
+        real_t *dense_vec, long row,
+        real_t data[], long indptr[], long indices[]
     ) nogil:
-    cdef realtp res = 0
+    cdef real_t res = 0
     cdef long i
     for i in range(indptr[row], indptr[row+1]):
         res += dense_vec[indices[i]] * data[i]
     return res
 
-cdef realtp* get_ptr_realtp(np.ndarray[realtp, ndim=1] arr):
+cdef real_t* get_ptr_real_t(np.ndarray[real_t, ndim=1] arr):
     return &arr[0]
 
 cdef long* get_ptr_long(np.ndarray[long, ndim=1] arr):
     return &arr[0]
 
 def cast_csr(Xcsr):
-    if Xcsr.data.dtype != C_realtp:
-        Xcsr.data = Xcsr.data.astype(C_realtp)
+    if Xcsr.data.dtype != C_real_t:
+        Xcsr.data = Xcsr.data.astype(C_real_t)
     if Xcsr.indptr.dtype != ctypes.c_long:
         Xcsr.indptr = Xcsr.indptr.astype(ctypes.c_long)
     if Xcsr.indices.dtype != ctypes.c_long:
         Xcsr.indices = Xcsr.indices.astype(ctypes.c_long)
 
 def fit_model_noinv(
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1,
-        realtp lam = 1.,
+        real_t lam = 1.,
         bint calc_inv=0
     ):
     cdef int n = X.shape[1] if Xcsr is None else Xcsr.shape[1]
     cdef int n_plusb = n + <int>add_bias
     cdef int m = X.shape[0] if Xcsr is None else Xcsr.shape[0]
-    cdef np.ndarray[realtp, ndim=2] XtX = np.empty((n_plusb,n_plusb), dtype=C_realtp)
-    cdef np.ndarray[realtp, ndim=1] XtY = np.empty(n_plusb, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=2] XtX = np.empty((n_plusb,n_plusb), dtype=C_real_t)
+    cdef np.ndarray[real_t, ndim=1] XtY = np.empty(n_plusb, dtype=C_real_t)
 
     update_matrices_noinv(
         X, y, w,
@@ -274,8 +276,8 @@ def fit_model_noinv(
     if lam != 0.:
         XtX[np.arange(n), np.arange(n)] += lam
 
-    cdef np.ndarray[realtp, ndim=2] XtX_copy = XtX.copy()
-    cdef np.ndarray[realtp, ndim=1] XtY_copy = XtY.copy()
+    cdef np.ndarray[real_t, ndim=2] XtX_copy = XtX.copy()
+    cdef np.ndarray[real_t, ndim=1] XtY_copy = XtY.copy()
 
     cdef char lo = 'L'
     cdef int one_int = 1
@@ -295,26 +297,26 @@ def fit_model_noinv(
 
 
 def fit_model_inv(
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1,
-        realtp lam = 1.
+        real_t lam = 1.
     ):
 
     cdef int n = X.shape[1] if Xcsr is None else Xcsr.shape[1]
     cdef int n_plusb = n + <int>add_bias
 
-    cdef np.ndarray[realtp, ndim=2] invXtX = np.zeros((n_plusb,n_plusb), dtype=C_realtp)
-    cdef np.ndarray[realtp, ndim=1] XtY = np.empty(n_plusb, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=2] invXtX = np.zeros((n_plusb,n_plusb), dtype=C_real_t)
+    cdef np.ndarray[real_t, ndim=1] XtY = np.empty(n_plusb, dtype=C_real_t)
 
     invXtX[np.arange(n_plusb), np.arange(n_plusb)] = 1. / lam
 
     if np.isfortran(X):
         X = np.ascontiguousarray(X)
-    if X.dtype != C_realtp:
-        X = X.astype(C_realtp)
+    if X.dtype != C_real_t:
+        X = X.astype(C_real_t)
 
     update_matrices_inv(
         invXtX,
@@ -326,10 +328,10 @@ def fit_model_inv(
         overwrite=1
     )
 
-    cdef realtp *ptr_XtY = &XtY[0]
-    cdef realtp *ptr_invXtX = &invXtX[0,0]
+    cdef real_t *ptr_XtY = &XtY[0]
+    cdef real_t *ptr_invXtX = &invXtX[0,0]
 
-    cdef np.ndarray[realtp, ndim=1] coefs = np.empty(n_plusb, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=1] coefs = np.empty(n_plusb, dtype=C_real_t)
     cblas_tsymv(CblasRowMajor, CblasUpper, n_plusb,
                 1., ptr_invXtX, n_plusb, ptr_XtY, 1,
                 0., &coefs[0], 1)
@@ -338,13 +340,13 @@ def fit_model_inv(
 
 
 def update_running_noinv(
-        np.ndarray[realtp, ndim=2] XtX,
-        np.ndarray[realtp, ndim=1] XtY,
-        np.ndarray[realtp, ndim=2] invXtX,
-        np.ndarray[realtp, ndim=1] coef,
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=2] XtX,
+        np.ndarray[real_t, ndim=1] XtY,
+        np.ndarray[real_t, ndim=2] invXtX,
+        np.ndarray[real_t, ndim=1] coef,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1,
         bint calc_inv=0
@@ -354,7 +356,7 @@ def update_running_noinv(
     cdef int n_plusb = n + <int>add_bias
     cdef int m = X.shape[0] if Xcsr is None else Xcsr.shape[0]
 
-    cdef np.ndarray[realtp, ndim=2] Xw
+    cdef np.ndarray[real_t, ndim=2] Xw
 
     cdef char lo = 'L'
     cdef int one_int = 1
@@ -375,13 +377,13 @@ def update_running_noinv(
         tpotri(&lo, &n_plusb, &invXtX[0,0], &n_plusb, &ignore)
 
 def update_running_inv(
-        np.ndarray[realtp, ndim=2] invXtX,
-        np.ndarray[realtp, ndim=1] XtY,
-        np.ndarray[realtp, ndim=1] coefs,
-        np.ndarray[realtp, ndim=1] x_vec, ### buffer
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=2] invXtX,
+        np.ndarray[real_t, ndim=1] XtY,
+        np.ndarray[real_t, ndim=1] coefs,
+        np.ndarray[real_t, ndim=1] x_vec, ### buffer
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1
     ):
@@ -400,19 +402,19 @@ def update_running_inv(
         overwrite=0
     )
 
-    cdef realtp *ptr_XtY = &XtY[0]
-    cdef realtp *ptr_invXtX = &invXtX[0,0]
+    cdef real_t *ptr_XtY = &XtY[0]
+    cdef real_t *ptr_invXtX = &invXtX[0,0]
     cblas_tsymv(CblasRowMajor, CblasUpper, n_plusb,
                 1., ptr_invXtX, n_plusb, ptr_XtY, 1,
                 0., &coefs[0], 1)
 
 
 def update_matrices_noinv(
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
-        np.ndarray[realtp, ndim=2] XtX,
-        np.ndarray[realtp, ndim=1] XtY,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
+        np.ndarray[real_t, ndim=2] XtX,
+        np.ndarray[real_t, ndim=1] XtY,
         Xcsr = None,
         bint add_bias=1,
         bint overwrite=0
@@ -421,8 +423,8 @@ def update_matrices_noinv(
     cdef int n_plusb = n + <int>add_bias
     cdef int m = X.shape[0] if Xcsr is None else Xcsr.shape[0]
 
-    cdef np.ndarray[realtp, ndim=1] Xsum
-    cdef np.ndarray[realtp, ndim=2] Xw
+    cdef np.ndarray[real_t, ndim=1] Xsum
+    cdef np.ndarray[real_t, ndim=2] Xw
 
     ### Note: in theory, can use X as either row-major or column-major,
     ### but then would have to keep track of whether XtX if upper or lower triangular,
@@ -461,7 +463,7 @@ def update_matrices_noinv(
                 XtX[:n,:n] += np.array(Xw_sp.T.dot(Xcsr).todense())
 
     cdef int one_int = 1
-    cdef realtp one = 1.
+    cdef real_t one = 1.
     if add_bias:
         if overwrite:
             XtX[n,n] = 0
@@ -471,7 +473,7 @@ def update_matrices_noinv(
                 Xsum = X.sum(axis=0)
             else:
                 Xsum = np.array(Xcsr.sum(axis=0)).reshape(-1)
-            XtX[n,n] += <realtp>m
+            XtX[n,n] += <real_t>m
         else:
             if Xcsr is None:
                 Xsum = np.einsum("ij,i->j", X, w)
@@ -480,7 +482,7 @@ def update_matrices_noinv(
                                 .multiply(w.reshape((-1,1)))
                                 .sum(axis=1))\
                                 .reshape(-1)
-            XtX[n,n] += <realtp> (w.sum())
+            XtX[n,n] += <real_t> (w.sum())
         if overwrite:
             tcopy(&n, &Xsum[0], &one_int, &XtX[0,n], &n_plusb)
         else:
@@ -490,7 +492,7 @@ def update_matrices_noinv(
         if w.shape[0] == 0:
             update_XtY(
                 XtY,
-                X, y, np.empty(0, dtype=C_realtp),
+                X, y, np.empty(0, dtype=C_real_t),
                 Xcsr = Xcsr,
                 add_bias=add_bias,
                 overwrite=overwrite
@@ -498,19 +500,19 @@ def update_matrices_noinv(
         else:
             update_XtY(
                 XtY,
-                Xw if Xcsr is None else X, y, np.empty(0, dtype=C_realtp),
+                Xw if Xcsr is None else X, y, np.empty(0, dtype=C_real_t),
                 Xcsr = Xw_sp if Xcsr is not None else None,
                 add_bias=add_bias,
                 overwrite=overwrite
             )
 
 def update_matrices_inv(
-        np.ndarray[realtp, ndim=2] invXtX,
-        np.ndarray[realtp, ndim=1] XtY,
-        np.ndarray[realtp, ndim=1] x_vec, ###buffer
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=2] invXtX,
+        np.ndarray[real_t, ndim=1] XtY,
+        np.ndarray[real_t, ndim=1] x_vec, ###buffer
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1,
         bint overwrite=0
@@ -523,18 +525,18 @@ def update_matrices_inv(
     if np.isfortran(X):
         X = np.ascontiguousarray(X)
 
-    cdef realtp *prt_X = &X[0,0] if Xcsr is None else NULL
-    cdef realtp *ptr_x_vec = &x_vec[0]
-    cdef realtp *ptr_XtX_inv = &invXtX[0,0]
-    cdef realtp *ptr_w = NULL
-    cdef realtp coef
+    cdef real_t *prt_X = &X[0,0] if Xcsr is None else NULL
+    cdef real_t *ptr_x_vec = &x_vec[0]
+    cdef real_t *ptr_XtX_inv = &invXtX[0,0]
+    cdef real_t *ptr_w = NULL
+    cdef real_t coef
     cdef int one = 1
-    cdef realtp one_realtp = 1.
+    cdef real_t one_real_t = 1.
 
     if w.shape[0]:
         ptr_w = &w[0]
 
-    cdef realtp *ptr_csr_data = NULL
+    cdef real_t *ptr_csr_data = NULL
     cdef long *ptr_csr_indptr = NULL
     cdef long *ptr_csr_indices = NULL
 
@@ -548,7 +550,7 @@ def update_matrices_inv(
                 if (add_bias):
                     ptr_x_vec[n] = tdot(&n, ptr_XtX_inv + n, &n_plusb, prt_X + i*n, &one)
                     ptr_x_vec[n] += ptr_XtX_inv[n_plusb*n_plusb - 1]
-                    taxpy(&n, &one_realtp, ptr_XtX_inv + n, &n_plusb, ptr_x_vec, &one)
+                    taxpy(&n, &one_real_t, ptr_XtX_inv + n, &n_plusb, ptr_x_vec, &one)
 
                 coef = tdot(&n, ptr_x_vec, &one, prt_X + i*n, &one)
                 if add_bias:
@@ -563,12 +565,12 @@ def update_matrices_inv(
 
     else:
         cast_csr(Xcsr)
-        ptr_csr_data = get_ptr_realtp(Xcsr.data)
+        ptr_csr_data = get_ptr_real_t(Xcsr.data)
         ptr_csr_indices = get_ptr_long(Xcsr.indices)
         ptr_csr_indptr = get_ptr_long(Xcsr.indptr)
         with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             for i in range(m):
-                tgemv_dense_sp(
+                tsymv_dense_sp(
                     ptr_XtX_inv, n_plusb,
                     ptr_csr_data, ptr_csr_indptr, ptr_csr_indices, i,
                     ptr_x_vec, add_bias
@@ -598,10 +600,10 @@ def update_matrices_inv(
 
 
 def update_XtY(
-        np.ndarray[realtp, ndim=1] XtY,
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=1] y,
-        np.ndarray[realtp, ndim=1] w,
+        np.ndarray[real_t, ndim=1] XtY,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=1] y,
+        np.ndarray[real_t, ndim=1] w,
         Xcsr = None,
         bint add_bias=1,
         bint overwrite=0
@@ -614,7 +616,7 @@ def update_XtY(
     cdef int n = X.shape[1] if Xcsr is None else Xcsr.shape[1]
     cdef int m = X.shape[0] if Xcsr is None else Xcsr.shape[0]
 
-    cdef np.ndarray[realtp, ndim=2] Xw
+    cdef np.ndarray[real_t, ndim=2] Xw
 
     if Xcsr is None:
         if w.shape[0] == 0:
@@ -649,7 +651,7 @@ def update_XtY(
                 XtY[:n] += Xw_sp.T.dot(y)
 
     cdef int one_int = 1
-    cdef realtp one = 1.
+    cdef real_t one = 1.
     if add_bias:
         if overwrite:
             XtY[n] = 0
@@ -660,8 +662,8 @@ def update_XtY(
             XtY[n] += tdot(&m, &y[0], &one_int, &w[0], &one_int)
  
 def x_A_x_batch(
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=2] invXtX,
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=2] invXtX,
         Xcsr = None,
         bint add_bias=1,
         bint copy_X=0
@@ -674,22 +676,22 @@ def x_A_x_batch(
     cdef int n_plusb = n + <int>add_bias
     cdef int m = X.shape[0] if Xcsr is None else Xcsr.shape[0]
 
-    cdef np.ndarray[realtp, ndim=2] tempX
-    cdef np.ndarray[realtp, ndim=1] outp = np.empty(m, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=2] tempX
+    cdef np.ndarray[real_t, ndim=1] outp = np.empty(m, dtype=C_real_t)
 
     cdef long i, j
-    cdef realtp one = 1.
+    cdef real_t one = 1.
     cdef int one_int = 1
 
-    cdef realtp *ptr_tempX = NULL
-    cdef realtp *ptr_X = NULL
-    cdef realtp *ptr_invXtX = &invXtX[0,0]
-    cdef realtp *ptr_outp = &outp[0]
+    cdef real_t *ptr_tempX = NULL
+    cdef real_t *ptr_X = NULL
+    cdef real_t *ptr_invXtX = &invXtX[0,0]
+    cdef real_t *ptr_outp = &outp[0]
 
     if Xcsr is None:
-        X = np.require(X, dtype=C_realtp, requirements=["C_CONTIGUOUS", "OWNDATA", "WRITEABLE"])
+        X = np.require(X, dtype=C_real_t, requirements=["C_CONTIGUOUS", "OWNDATA", "WRITEABLE"])
 
-        tempX = np.zeros((m, n_plusb), dtype=C_realtp)
+        tempX = np.zeros((m, n_plusb), dtype=C_real_t)
         ptr_tempX = &tempX[0,0]
         ptr_X = &X[0,0]
 
@@ -712,8 +714,8 @@ def x_A_x_batch(
                     ptr_outp[i] += ptr_invXtX[n_plusb*n_plusb - 1]
 
     else:
-        if Xcsr.dtype != C_realtp:
-            Xcsr = Xcsr.astype(C_realtp)
+        if Xcsr.dtype != C_real_t:
+            Xcsr = Xcsr.astype(C_real_t)
 
         with nogil, boundscheck(False), nonecheck(False), wraparound(False):
             for i in range(n_plusb):
@@ -730,18 +732,18 @@ def x_A_x_batch(
     return outp
 
 def get_matrix_inv(
-        np.ndarray[realtp, ndim=2] X,
-        np.ndarray[realtp, ndim=2] invX
+        np.ndarray[real_t, ndim=2] X,
+        np.ndarray[real_t, ndim=2] invX
     ):
     if X.shape[0] == 0:
         return None
-    cdef realtp *ptr_X = &X[0,0]
-    cdef realtp *ptr_invX = &invX[0,0]
+    cdef real_t *ptr_X = &X[0,0]
+    cdef real_t *ptr_invX = &invX[0,0]
     cdef int n = X.shape[0]
     cdef int ignore = 0
     cdef char lo = 'L'
     with nogil:
-        memcpy(ptr_invX, ptr_X, <size_t>(X.shape[0]*X.shape[1])*sizeof(realtp))
+        memcpy(ptr_invX, ptr_X, <size_t>(X.shape[0]*X.shape[1])*sizeof(real_t))
         tpotrf(&lo, &n, ptr_invX, &n, &ignore)
         tpotri(&lo, &n, ptr_invX, &n, &ignore)
 
@@ -754,33 +756,33 @@ def get_matrix_inv(
 #### (If using the inverse of Sigma, the eigen vectors are the same,
 ####  while the eigen values are 1 divided over the eigen values of the inverse)
 def get_mvnorm_multiplier(
-        np.ndarray[realtp, ndim=2] Sigma,
-        realtp multiplier,
+        np.ndarray[real_t, ndim=2] Sigma,
+        real_t multiplier,
         bint is_inverse,
         bint overwrite_sigma
     ):
 
-    Sigma = np.require(Sigma, dtype=C_realtp, requirements=["C_CONTIGUOUS", "OWNDATA"])
+    Sigma = np.require(Sigma, dtype=C_real_t, requirements=["C_CONTIGUOUS", "OWNDATA"])
     cdef int m = Sigma.shape[0]
-    cdef np.ndarray[realtp, ndim=2] eig_Vecs = np.empty((0,0), dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=2] eig_Vecs = np.empty((0,0), dtype=C_real_t)
     if overwrite_sigma:
         eig_Vecs = Sigma
     else:
         eig_Vecs = Sigma.copy()
-    cdef np.ndarray[realtp, ndim=1] eig_vals = np.empty(m, dtype=C_realtp)
-    cdef realtp *ptr_Ev = &eig_Vecs[0,0]
-    cdef realtp *ptr_ev = &eig_vals[0]
+    cdef np.ndarray[real_t, ndim=1] eig_vals = np.empty(m, dtype=C_real_t)
+    cdef real_t *ptr_Ev = &eig_Vecs[0,0]
+    cdef real_t *ptr_ev = &eig_vals[0]
 
     cdef char lo = 'L'
     cdef int one = 1
     cdef int minus_one = -1
     cdef char V = 'V'
     cdef int ignore
-    cdef realtp size_buffer
+    cdef real_t size_buffer
 
     tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &size_buffer, &minus_one, &ignore)
     cdef int size_buffer_as_int = int(size_buffer)
-    cdef np.ndarray[realtp, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_real_t)
     tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &buffer_arr[0], &size_buffer_as_int, &ignore)
 
     ### Note: the obtained eigen values are transposed at this point as they were passed
@@ -803,26 +805,26 @@ def get_mvnorm_multiplier(
 
 
 def mvnorm_from_Eig(
-        np.ndarray[realtp, ndim=1] mu,
-        np.ndarray[realtp, ndim=2] EigMultiplier,
+        np.ndarray[real_t, ndim=1] mu,
+        np.ndarray[real_t, ndim=2] EigMultiplier,
         size_t n,
         rng
     ):
     cdef size_t m = EigMultiplier.shape[0]
-    cdef np.ndarray[realtp, ndim=2] X = np.empty((0,0), dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=2] X = np.empty((0,0), dtype=C_real_t)
     if isinstance(rng, np.random.Generator):
-        X = rng.standard_normal(size=(n, m), dtype=C_realtp)
+        X = rng.standard_normal(size=(n, m), dtype=C_real_t)
     else:
-        X = rng.normal(size=(n, m), dtype=C_realtp).astype(C_realtp)
+        X = rng.normal(size=(n, m), dtype=C_real_t).astype(C_real_t)
     return mu + X.dot(EigMultiplier)
 
 
 def mvnorm_from_Eig_different_m(
-        np.ndarray[realtp, ndim=1] mu,
-        np.ndarray[realtp, ndim=2] EigMultiplier,
-        np.ndarray[realtp, ndim=1] eig_vals_multiplied,
-        np.ndarray[realtp, ndim=1] eig_vals_orig,
-        realtp new_m,
+        np.ndarray[real_t, ndim=1] mu,
+        np.ndarray[real_t, ndim=2] EigMultiplier,
+        np.ndarray[real_t, ndim=1] eig_vals_multiplied,
+        np.ndarray[real_t, ndim=1] eig_vals_orig,
+        real_t new_m,
         size_t n,
         rng,
         bint return_multiplier
@@ -838,29 +840,29 @@ def mvnorm_from_Eig_different_m(
 
 ## https://stats.stackexchange.com/questions/175271/can-i-get-a-cholesky-decomposition-from-the-inverse-of-a-matrix
 def mvnorm_from_invcov(
-        np.ndarray[realtp, ndim=1] mu,
-        np.ndarray[realtp, ndim=2] invSigma,
+        np.ndarray[real_t, ndim=1] mu,
+        np.ndarray[real_t, ndim=2] invSigma,
         size_t size,
         rng
     ):
     
     ### First calculate eigen values and eigen vectors
     cdef int m = invSigma.shape[0]
-    cdef np.ndarray[realtp, ndim=2] eig_Vecs = invSigma.copy()
-    cdef np.ndarray[realtp, ndim=1] eig_vals = np.empty(m, dtype=C_realtp)
-    cdef realtp *ptr_Ev = &eig_Vecs[0,0]
-    cdef realtp *ptr_ev = &eig_vals[0]
+    cdef np.ndarray[real_t, ndim=2] eig_Vecs = invSigma.copy()
+    cdef np.ndarray[real_t, ndim=1] eig_vals = np.empty(m, dtype=C_real_t)
+    cdef real_t *ptr_Ev = &eig_Vecs[0,0]
+    cdef real_t *ptr_ev = &eig_vals[0]
 
     cdef char lo = 'L'
     cdef int one = 1
     cdef int minus_one = -1
     cdef char V = 'V'
     cdef int ignore
-    cdef realtp size_buffer
+    cdef real_t size_buffer
 
     tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &size_buffer, &minus_one, &ignore)
     cdef int size_buffer_as_int = int(size_buffer)
-    cdef np.ndarray[realtp, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_realtp)
+    cdef np.ndarray[real_t, ndim=1] buffer_arr = np.empty(size_buffer_as_int, dtype=C_real_t)
     tsyev(&V, &lo, &m, ptr_Ev, &m, ptr_ev, &buffer_arr[0], &size_buffer_as_int, &ignore)
 
     ### Note: the obtained eigen values are transposed at this point as they were passed
@@ -871,10 +873,82 @@ def mvnorm_from_invcov(
     ### Now use the formula
     cdef size_t n = mu.shape[0]
     if isinstance(rng, np.random.Generator):
-        sample_stdnorm = rng.standard_normal(size=(n, m), dtype=C_realtp)
+        sample_stdnorm = rng.standard_normal(size=(n, m), dtype=C_real_t)
     else:
-        sample_stdnorm = rng.normal(size=(n, m)).astype(C_realtp)
+        sample_stdnorm = rng.normal(size=(n, m)).astype(C_real_t)
     return mu + np.dot(
         sample_stdnorm,
         np.einsum("ij,i->ij", eig_Vecs, np.sqrt(1. / eig_vals))
     )
+
+def add_to_diag(np.ndarray[real_t, ndim=2] XtX, bint add_bias, real_t lam):
+    if not XtX.shape[0]:
+        return None
+    cdef size_t n = XtX.shape[0] - add_bias
+    cdef size_t lda = XtX.shape[0]
+    cdef size_t ix
+    cdef real_t *ptr_XtX = &XtX[0,0]
+    with nogil, boundscheck(False), nonecheck(False), wraparound(False):
+        for ix in range(n):
+            ptr_XtX[ix + ix*lda] += lam
+
+def fill_lower_triangle(np.ndarray[real_t, ndim=2] XtX):
+    if not XtX.shape[0]:
+        return None
+    cdef size_t n = XtX.shape[0]
+    cdef size_t ix, row, col
+    cdef real_t *ptr_XtX = &XtX[0,0]
+    with nogil, boundscheck(False), nonecheck(False), wraparound(False):
+        for row in range(1, n):
+            for col in range(row):
+                ptr_XtX[col + row*n] = ptr_XtX[row + col*n]
+
+def solve_elasticnet(
+        np.ndarray[real_t, ndim=2] XtX,
+        np.ndarray[real_t, ndim=1] XtY2,
+        np.ndarray[real_t, ndim=1] prev_coef,
+        np.ndarray[real_t, ndim=1] coef,
+        bint add_bias=1
+    ):
+    
+    cdef int n = XtX.shape[0]
+    cdef int ix
+    cdef real_t *ptr_XtX = &XtX[0,0]
+    cdef real_t *ptr_XtY_pos = &XtY2[0]
+    cdef real_t *ptr_XtY_neg = ptr_XtY_pos + n
+    cdef real_t *ptr_prev_pos = &prev_coef[0]
+    cdef real_t *ptr_prev_neg = ptr_prev_pos + n
+    cdef int one = 1
+
+    cdef real_t diff_iter = 0.
+    cdef real_t diff_val = 0.
+    cdef real_t newval = 0
+
+    with nogil, boundscheck(False), nonecheck(False), wraparound(False):
+        while True:
+            diff_iter = 0;
+            for ix in range(n):
+                newval = ptr_prev_pos[ix] + ptr_XtY_pos[ix] / ptr_XtX[ix + ix*n]
+                newval = newval if newval >= 0. else 0.
+                diff_val = newval - ptr_prev_pos[ix]
+                if (fabs_t(diff_val) > 1e-10):
+                    diff_iter += fabs_t(diff_val)
+                    taxpy(&n, &diff_val, ptr_XtX + ix*n, &one, ptr_XtY_neg, &one)
+                    diff_val = -diff_val
+                    taxpy(&n, &diff_val, ptr_XtX + ix*n, &one, ptr_XtY_pos, &one)
+                    ptr_prev_pos[ix] = newval;
+            for ix in range(n):
+                newval = ptr_prev_neg[ix] + ptr_XtY_neg[ix] / ptr_XtX[ix + ix*n]
+                newval = newval if newval >= 0. else 0.
+                diff_val = newval - ptr_prev_neg[ix]
+                if fabs_t(diff_val) > 1e-10:
+                    diff_iter += fabs_t(diff_val)
+                    taxpy(&n, &diff_val, ptr_XtX + ix*n, &one, ptr_XtY_pos, &one)
+                    diff_val = -diff_val
+                    taxpy(&n, &diff_val, ptr_XtX + ix*n, &one, ptr_XtY_neg, &one)
+                    ptr_prev_neg[ix] = newval
+            
+            if (isnan(diff_iter)) or (not isfinite(diff_iter)) or (diff_iter < 1e-8):
+                break
+        for ix in range(n):
+            coef[ix] = ptr_prev_pos[ix] - ptr_prev_neg[ix]

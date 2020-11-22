@@ -5,6 +5,7 @@ import warnings
 from sklearn.base import BaseEstimator
 from . import _wrapper_double, _wrapper_float
 
+__all__ = ["LinearRegression", "ElasticNet"]
 
 class LinearRegression(BaseEstimator):
     """
@@ -13,6 +14,7 @@ class LinearRegression(BaseEstimator):
     Typical Linear Regression model, which keeps track of the aggregated data
     needed to obtain the closed-form solution in a way that calling 'partial_fit'
     multiple times would be equivalent to a single call to 'fit' with all the data.
+    This is an exact method rather than a stochastic optimization procedure.
 
     Also provides functionality for making predictions according to upper confidence
     bound (UCB) and to Thompson sampling criteria.
@@ -726,3 +728,331 @@ class LinearRegression(BaseEstimator):
                 pred[:] += coef[-1]
 
         return pred
+
+class ElasticNet(BaseEstimator):
+    """
+    ElasticNet Regression
+
+    ElasticNet regression (with penalization on the l1 and l2 norms of
+    the coefficients),  which keeps track of the aggregated data
+    needed to obtain the optimal coefficients in such a way that calling 'partial_fit'
+    multiple times would be equivalent to a single call to 'fit' with all the data.
+    This is an exact method rather than a stochastic optimization procedure.
+    
+    Note
+    ----
+    This ElasticNet regression is fit through a reduction to non-negative
+    least squares with twice the number of variables, which is in turn solved
+    through a coordinate descent procedure. This is typically slower than the
+    lasso paths used in GLMNet and SciKit-Learn, and scales much worse with
+    the number of features/columns, but allows for faster incremental updates
+    through 'partial_fit', which will give the same result as calls to fit.
+
+    Note
+    ----
+    This model will not standardize the input data in any way.
+
+    Note
+    ----
+    By default, will set the l1 and l2 regularization in the same way as
+    GLMNet and SciKit-Learn - that is, the regularizations increase along
+    with the number of rows in the data, which means they will be different
+    after each call to 'fit' or 'partial_fit'. It is nevertheless possible
+    to specify the l1 and l2 regularization directly, and both will remain
+    constant that way, but be careful about the choice for such hyperparameters.
+
+    Note
+    ----
+    Doing regression this way requires both memory and computation time
+    which scale quadratically with the number of columns/features/variables. As
+    such, the class will by default use C 'float' types (typically ``np.float32``)
+    instead of C 'double' (``np.float64``), in order to save memory.
+
+    Parameters
+    ----------
+    alpha : float
+        Strenght of the regularization.
+    l1_ratio : float [0,1]
+        Proportion of the regularization that will be applied to the l1 norm of
+        the coefficients (remainder will be applied to the l2 norm). Must be a
+        number between zero and one. If passing ``l1_ratio=0``, it's recommended
+        instead to use the ``LinearRegression`` class which uses more efficient
+        procedures.
+
+        Using higher l1 regularization is more likely to result in some of the
+        obtained coefficients being exactly zero, which is oftentimes desirable.
+    fit_intercept : bool
+        Whether to add an intercept term to the formula. If passing 'True', it will
+        be the last entry in the coefficients.
+    l1 : None or float
+        Strength of the l1 regularization. If passing it, will bypass the values
+        set through ``alpha`` and ``l1_ratio``, and will remain constant inbetween
+        calls to ``fit`` and ``partial_fit``. If passing this, should also pass
+        ``l2`` or otherwise will assume that it is zero.
+    l2 : None or float
+        Strength of the l2 regularization. If passing it, will bypass the values
+        set through ``alpha`` and ``l1_ratio``, and will remain constant inbetween
+        calls to ``fit`` and ``partial_fit``. If passing this, should also pass
+        ``l1`` or otherwise will assume that it is zero.
+    use_float : bool
+        Whether to use C 'float' type for the required matrices. If passing 'False',
+        will use C 'double'. Be aware that memory usage for this model can grow
+        very large. Can be changed after initialization.
+    copy_X : bool
+        Whether to make deep copies of the 'X' input passed to the model's methods.
+        If passing 'False', the 'X' object might be modified in-place. Note that
+        if passing 'False', passing 'X' which is a non-contiguous subset of a
+        larger array (e.g. 'X[:10, :100]') might provide the wrong results.
+
+    Attributes
+    ----------
+    coef_ : array(n) or array(n+1)
+        The obtained coefficients. If passing 'fit_intercept=True', the intercept
+        will be at the last entry.
+
+    References
+    ----------
+    .. [1] Franc, Vojtech, Vaclav Hlavac, and Mirko Navara. "Sequential coordinate-wise algorithm for the non-negative least squares problem." International Conference on Computer Analysis of Images and Patterns. Springer, Berlin, Heidelberg, 2005.
+    """
+    def __init__(self, alpha=0.1, l1_ratio=0.5, fit_intercept=True,
+                 l1=None, l2=None, copy_X=True, use_float=True):
+        self.alpha = alpha
+        self.l1_ratio = l1_ratio
+        self.fit_intercept = fit_intercept
+        self.l1 = l1
+        self.l2 = l2
+        self.copy_X = copy_X
+        self._use_float = bool(use_float)
+
+        self._set_dtype(force_cast=False)
+        self.coef_ = np.empty(0, dtype=self._dtype)
+        self._XtX = np.empty((0,0), dtype=self._dtype)
+        self._XtY = np.empty(0, dtype=self._dtype)
+        self._buffer_XtY2 = np.empty(0, dtype=self._dtype)
+        self._prev_coef = np.empty(0, dtype=self._dtype)
+        self._m = 0
+        self._n = 0
+        self._l1_curr = 0.
+        self._l2_curr = 0.
+
+        self.is_fitted_ = False
+
+    def _set_dtype(self, force_cast=False):
+        self._dtype = ctypes.c_float if self._use_float else ctypes.c_double
+
+        if force_cast:
+            if self.coef_.dtype != self._dtype:
+                self.coef_ = self.coef_.astype(self._dtype)
+            if self._XtX.dtype != self._dtype:
+                self._XtX = self._XtX.astype(self._dtype)
+            if self._XtY.dtype != self._dtype:
+                self._XtY = self._XtY.astype(self._dtype)
+            if self._buffer_XtY2.dtype != self._dtype:
+                self._buffer_XtY2 = self._buffer_XtY2.astype(self._dtype)
+            if self._prev_coef.dtype != self._dtype:
+                self._prev_coef = self._prev_coef.astype(self._dtype)
+
+    @property
+    def use_float(self):
+        return self._use_float
+    @use_float.setter
+    def use_float(self, value):
+        self._use_float = use_float
+        self._set_dtype(force_cast=True)
+
+    def _validate_inputs(self):
+        if isinstance(self.alpha, int):
+            self.alpha = float(self.alpha)
+        if isinstance(self.l1_ratio, int):
+            self.l1_ratio = float(self.l1_ratio)
+        assert self.alpha >= 0.
+        assert self.l1_ratio >= 0.
+        assert self.l1_ratio <= 1.
+
+        self.fit_intercept = bool(self.fit_intercept)
+
+        if self.l1 is not None:
+            if isinstance(self.l1, int):
+                self.l1 = float(self.l1)
+            assert self.l1 >= 0.
+            if self.l2 is None:
+                self.l2 = 0.
+        if self.l2 is not None:
+            if isinstance(self.l2, int):
+                self.l2 = float(self.l2)
+            assert self.l2 >= 0.
+            if self.l1 is None:
+                self.l1 = 0.
+
+    def _calc_l1_l2(self, m):
+        if self.l1 is not None:
+            return self.l1, self.l2
+        div = 1. / m
+        l1 = self.alpha * self.l1_ratio
+        l2 = self.alpha * (1. - self.l1_ratio)
+        l1 /= div
+        l2 /= div
+        return l1, l2
+
+    def fit(self, X, y, sample_weight=None):
+        """
+        Fit model to data
+
+        Note
+        ----
+        Calling 'fit' will reset whatever previous data was there. For fitting
+        the model incrementally to new data, use 'partial_fit' instead.
+
+        Parameters
+        ----------
+        X : array(m,n) or CSR matrix(m, n)
+            The covariates.
+        y : array-like(m)
+            The target variable.
+        sample_weight : None or array-like(m)
+            Observation weights for each row.
+
+        Returns
+        -------
+        self
+
+        """
+        self._validate_inputs()
+        X, Xcsr, y, w = LinearRegression._process_X_y_w(self, X, y, sample_weight)
+        self._m = X.shape[0]
+        self._n = X.shape[1]
+        if min(self._m, self._n) == 0:
+            raise ValueError("Cannot fit model to empty inputs.")
+        l1, l2 = self._calc_l1_l2(self._m)
+
+        n_plus_b = int(self._n + self.fit_intercept)
+        self._XtX = np.zeros((n_plus_b, n_plus_b), dtype=self._dtype)
+        self._XtY = np.zeros(n_plus_b, dtype=self._dtype)
+        self._buffer_XtY2 = np.empty(2*n_plus_b, dtype=self._dtype)
+        self._prev_coef = np.zeros(2*n_plus_b, dtype=self._dtype)
+        self.coef_ = np.empty(n_plus_b, dtype=self._dtype)
+
+        cy_funs = _wrapper_float if self._use_float else _wrapper_double
+        cy_funs.update_matrices_noinv(
+            X,
+            y,
+            w,
+            self._XtX,
+            self._XtY,
+            Xcsr,
+            bool(self.fit_intercept),
+            True
+        )
+        if (Xcsr is None) and np.isfortran(X):
+            self._XtX[:,:] = self._XtX.T
+            if np.isfortran(self._XtX):
+                self._XtX = np.ascontiguousarray(self._XtX)
+        ### Do not regularize the intercept
+        cy_funs.add_to_diag(self._XtX, self.fit_intercept, l2)
+        cy_funs.fill_lower_triangle(self._XtX)
+        self._buffer_XtY2[:n_plus_b] =  self._XtY - l1
+        self._buffer_XtY2[n_plus_b:] = -self._XtY - l1
+        ### Do not regularize the intercept
+        if self.fit_intercept:
+            self._buffer_XtY2[self._n] =  self._XtY[-1]
+            self._buffer_XtY2[-1]      = -self._XtY[-1]
+        cy_funs.solve_elasticnet(
+            self._XtX,
+            self._buffer_XtY2,
+            self._prev_coef,
+            self.coef_
+        )
+
+        self._l1_curr = l1
+        self._l2_curr = l2
+        self.is_fitted_ = True
+        return self
+
+    def partial_fit(self, X, y, sample_weight=None, *args, **kwargs):
+        """
+        Fit model incrementally to new data
+
+        Parameters
+        ----------
+        X : array(m,n) or CSR matrix(m, n)
+            The covariates.
+        y : array-like(m)
+            The target variable.
+        sample_weight : None or array-like(m)
+            Observation weights for each row.
+
+        Returns
+        -------
+        self
+
+        """
+        if not self.is_fitted_:
+            return self.fit(X, y, sample_weight)
+
+        if X.shape[1] != self._n:
+            raise ValueError("Number of columns in X doesn't match with previous.")
+        m_add = X.shape[0]
+        if m_add == 0:
+            return self
+        self._validate_inputs()
+        X, Xcsr, y, w = LinearRegression._process_X_y_w(self, X, y, sample_weight)
+
+        ### Note: the regularization changes at each step if imitating elasticnet
+        l1, l2_target = self._calc_l1_l2(self._m + m_add)
+        l2_add = l2_target - self._l2_curr
+        n_plus_b = int(self._n + self.fit_intercept)
+
+        cy_funs = _wrapper_float if self._use_float else _wrapper_double
+        cy_funs.update_matrices_noinv(
+            X,
+            y,
+            w,
+            self._XtX,
+            self._XtY,
+            Xcsr,
+            bool(self.fit_intercept),
+            False
+        )
+        if (Xcsr is None) and np.isfortran(X):
+            self._XtX[:,:] = self._XtX.T
+            if np.isfortran(self._XtX):
+                self._XtX = np.ascontiguousarray(self._XtX)
+        if (np.abs(l2_add) > 1e-10):
+            cy_funs.add_to_diag(self._XtX, self.fit_intercept, l2_add)
+        cy_funs.fill_lower_triangle(self._XtX)
+        self._buffer_XtY2[:n_plus_b] =  self._XtY - l1
+        self._buffer_XtY2[n_plus_b:] = -self._XtY - l1
+        ### Do not regularize the intercept
+        if self.fit_intercept:
+            self._buffer_XtY2[self._n] =  self._XtY[-1]
+            self._buffer_XtY2[-1]      = -self._XtY[-1]
+        ### TODO: for some reason, it gets a very bad result if the previous
+        ### coefficients are reused, which should not be the case
+        self._prev_coef[:] = 0.
+        cy_funs.solve_elasticnet(
+            self._XtX,
+            self._buffer_XtY2,
+            self._prev_coef,
+            self.coef_
+        )
+
+        self._m += m_add
+        self._l1_curr = l1
+        self._l2_curr = l2_target
+        return self
+
+    def predict(self, X):
+        """
+        Make predictions on new data
+
+        Parameters
+        ----------
+        X : array(m,n) or CSR matrix(m, n)
+            The covariates.
+
+        Returns
+        -------
+        y_hat : array(m)
+            The predicted values given 'X'.
+        """
+        return LinearRegression.predict(self, X)

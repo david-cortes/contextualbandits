@@ -251,10 +251,20 @@ evaluateNCIS
 Linear Regression
 =================================
 
-.. automodule:: contextualbandits.linreg
+The package offers non-stochastic linear regression procedures with exact "partial_fit" solutions, which are recommended to use alongside the online policies for better incremental updates.
+
+Linear Regression
+-----------------
+.. autoclass:: contextualbandits.linreg.LinearRegression
     :members:
     :undoc-members:
-    :show-inheritance:
+    :inherited-members:
+
+Linear Regression
+-----------------
+.. autoclass:: contextualbandits.linreg.ElasticNet
+    :members:
+    :undoc-members:
     :inherited-members:
 
 
