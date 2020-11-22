@@ -260,8 +260,8 @@ Linear Regression
     :undoc-members:
     :inherited-members:
 
-Linear Regression
------------------
+ElasticNet
+----------
 .. autoclass:: contextualbandits.linreg.ElasticNet
     :members:
     :undoc-members:
