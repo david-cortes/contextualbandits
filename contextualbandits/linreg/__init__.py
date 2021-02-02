@@ -7,6 +7,35 @@ from . import _wrapper_double, _wrapper_float
 
 __all__ = ["LinearRegression", "ElasticNet"]
 
+def _is_row_major(X):
+    if (X is None) or (issparse(X)):
+        return True
+    else:
+        return X.strides[1] == X.dtype.itemsize
+
+def _copy_if_subview(X):
+    ### TODO: the Cython functions should accept a 'leading dimension'
+    ### parameter so as to avoid copying the data here
+    if (X is not None) and (not issparse(X)):
+        row_major = _is_row_major(X)
+        leading_dimension = int(X.strides[0 if row_major else 1] / X.dtype.itemsize)
+        if leading_dimension != X.shape[1 if row_major else 0]:
+            X = X.copy()
+        elif (len(X.strides) != 2) or (not X.flags.aligned):
+            X = X.copy()
+        if _is_row_major(X) != row_major:
+            X = np.ascontiguousarray(X)
+    return X
+
+def _copy_if_subview_1d(arr):
+    if arr is not None:
+        if not isinstance(arr, np.ndarray):
+            arr = np.ascontiguousarray(arr)
+        arr = arr.reshape(-1)
+        if (arr.strides[0] != arr.dtype.itemsize) or (not arr.flags.aligned):
+            arr = np.ascontiguousarray(arr)
+    return arr
+
 class LinearRegression(BaseEstimator):
     """
     Linear Regression
@@ -95,11 +124,6 @@ class LinearRegression(BaseEstimator):
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
         very large. Can be changed after initialization.
-    copy_X : bool
-        Whether to make deep copies of the 'X' input passed to the model's methods.
-        If passing 'False', the 'X' object might be modified in-place. Note that
-        if passing 'False', passing 'X' which is a non-contiguous subset of a
-        larger array (e.g. 'X[:10, :100]') might provide the wrong results.
 
     Attributes
     ----------
@@ -111,7 +135,7 @@ class LinearRegression(BaseEstimator):
                  calc_inv=True, precompute_ts=False,
                  precompute_ts_multiplier=1.,
                  n_presampled=None, rng_presample=None,
-                 use_float=True, copy_X=True):
+                 use_float=True):
         self.lambda_ = lambda_
         self.fit_intercept = fit_intercept
         self._method = method
@@ -121,7 +145,6 @@ class LinearRegression(BaseEstimator):
         self._n_presampled = n_presampled
         self.rng_presample = rng_presample
         self._use_float = bool(use_float)
-        self.copy_X = bool(copy_X)
 
         self._set_dtype(force_cast=False)
         self.coef_ = np.empty(0, dtype=self._dtype)
@@ -297,16 +320,16 @@ class LinearRegression(BaseEstimator):
             Xcsr = None
             if X.__class__.__name__ == "DataFrame":
                 X = X.to_numpy()
-            if self.copy_X:
-                X = X.copy()
-            X = np.array(X)
+            if (not isinstance(X, np.ndarray)) or (not _is_row_major(X)):
+                X = np.ascontiguousarray(X)
             if len(X.shape) != 2:
                 raise ValueError("'X' must be 2-dimensional")
+            X = _copy_if_subview(X)
         else:
             if not isspmatrix_csr(X):
                 warnings.warn("Sparse matrices only supported in CSR format. Input will be converted.")
                 X = csr_matrix(X)
-            Xcsr = X.copy()
+            Xcsr = X
             X = np.empty((0,0), dtype=self._dtype)
             if len(Xcsr.shape) != 2:
                 raise ValueError("'X' must be 2-dimensional")
@@ -322,11 +345,10 @@ class LinearRegression(BaseEstimator):
         if sample_weight is None:
             w = np.empty(0, dtype=self._dtype)
         else:
-            w = np.array(sample_weight).reshape(-1)
+            w = sample_weight
 
-        if self.copy_X:
-            y = y.copy()
-            w = w.copy()
+        y = _copy_if_subview_1d(y)
+        w = _copy_if_subview_1d(w)
 
         if Xcsr is None:
             assert X.shape[0] == y.shape[0]
@@ -798,11 +820,6 @@ class ElasticNet(BaseEstimator):
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
         very large. Can be changed after initialization.
-    copy_X : bool
-        Whether to make deep copies of the 'X' input passed to the model's methods.
-        If passing 'False', the 'X' object might be modified in-place. Note that
-        if passing 'False', passing 'X' which is a non-contiguous subset of a
-        larger array (e.g. 'X[:10, :100]') might provide the wrong results.
 
     Attributes
     ----------
@@ -815,13 +832,12 @@ class ElasticNet(BaseEstimator):
     .. [1] Franc, Vojtech, Vaclav Hlavac, and Mirko Navara. "Sequential coordinate-wise algorithm for the non-negative least squares problem." International Conference on Computer Analysis of Images and Patterns. Springer, Berlin, Heidelberg, 2005.
     """
     def __init__(self, alpha=0.1, l1_ratio=0.5, fit_intercept=True,
-                 l1=None, l2=None, copy_X=True, use_float=True):
+                 l1=None, l2=None, use_float=True):
         self.alpha = alpha
         self.l1_ratio = l1_ratio
         self.fit_intercept = fit_intercept
         self.l1 = l1
         self.l2 = l2
-        self.copy_X = copy_X
         self._use_float = bool(use_float)
 
         self._set_dtype(force_cast=False)
