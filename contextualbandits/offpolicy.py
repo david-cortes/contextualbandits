@@ -347,7 +347,8 @@ class OffsetTree:
         y_node[r_more_onehalf] = 1. - y[r_more_onehalf]
         w_node = (.5 - r_node) / p_node
         w_node[r_more_onehalf] = (  (r_node - .5) / p_node  )[r_more_onehalf]
-        w_node = w_node * (w_node.shape[0] / np.sum(w_node))
+        if w_node.shape[0] != 0:
+            w_node = w_node * (w_node.shape[0] / np.sum(w_node))
         
         n_pos = y_node.sum()
         if y_node.shape[0] == 0:
