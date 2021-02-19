@@ -382,10 +382,9 @@ class OffsetTree:
         """
         assert self.is_fitted
         X = _check_X_input(X)
-        pred = np.empty(X.shape[0], dtype=int)
-        for i in range(X.shape[0]):
-            pred[i] = self._predict(i, X)
-        return pred
+        pred = Parallel(n_jobs=self.njobs, verbose=0, require="sharedmem")(
+            delayed(self._predict)(i, X) for i in range(X.shape[0]))
+        return np.array(pred)
 
     def _predict(self, i, X):
         curr_node = 0
