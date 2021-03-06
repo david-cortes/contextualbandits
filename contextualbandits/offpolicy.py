@@ -130,7 +130,6 @@ class DoublyRobustEstimator:
         
         if type(reward_estimator) == np.ndarray:
             assert reward_estimator.shape[1] == nchoices
-            assert reward_estimator.shape[0] == X.shape[0]
         else:
             assert ('predict_proba_separate' in dir(reward_estimator)) or ('predict_proba' in dir(reward_estimator))
 
