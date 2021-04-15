@@ -7,6 +7,7 @@ global-exclude *.o
 global-exclude *.dll
 global-exclude *.dynlib
 global-exclude *.directory
+global-exclude *.md
 include pyproject.toml
 include contextualbandits/cy_cpp_helpers.cpp
 exclude contextualbandits/_cy_utils.cpp
