@@ -20,6 +20,10 @@ _Note: as of version 0.2.0, this package contains Cython code which needs to be 
 pip install --no-use-pep517 contextualbandits
 ```
 
+Fedora Linux users can install package using dnf package manager:
+
+```dnf install python3-contextualbandits```
+
 ## Problem description
 
 Contextual bandits, also known as multi-armed bandits with covariates or associative reinforcement learning, is a problem similar to multi-armed bandits, but with the difference that side information or covariates are available at each iteration and can be used to select an arm, whose rewards are also dependent on the covariates.
