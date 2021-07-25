@@ -17,6 +17,10 @@ or if that fails:
 pip install --no-use-pep517 contextualbandits
 ```
 
+Fedora Linux users can install package using dnf package manager:
+
+```dnf install python3-contextualbandits```
+
 
 _Note: as of version 0.2.0, this package contains Cython code which needs to be compiled - meaning, it requires a C compiler and setting up Python's setuptools to use it. If for some reason the latest version fails to install in your setup, it's still possible to install an earlier version which was pure-python with `pip install contextualbandits==0.1.8.5` (also available in this GitHub page under branch `no_cython`)._
 
