@@ -12,13 +12,14 @@ Package is available on PyPI, can be installed with
 
 ```pip install contextualbandits```
 
-
-_Note: as of version 0.2.0, this package contains Cython code which needs to be compiled - meaning, it requires a C compiler and setting up Python's setuptools to use it. If for some reason the latest version fails to install in your setup, it's still possible to install an earlier version which was pure-python with `pip install contextualbandits==0.1.8.5` (also available in this GitHub page under branch `no_cython`)._
-
-**Note:** the setup script uses a PEP517 environment, which means it will create an isolated virtual environment, install its build dependencies there, compile, and then copy to the actual environment. This can causes issues - for example, if one has NumPy<1.20 and the build environment installs NumPy>=1.20, there will be a binary incompatibility which will make the package fail to import. To avoid PEP517, install with:
+or if that fails:
 ```
 pip install --no-use-pep517 contextualbandits
 ```
+
+
+_Note: as of version 0.2.0, this package contains Cython code which needs to be compiled - meaning, it requires a C compiler and setting up Python's setuptools to use it. If for some reason the latest version fails to install in your setup, it's still possible to install an earlier version which was pure-python with `pip install contextualbandits==0.1.8.5` (also available in this GitHub page under branch `no_cython`)._
+
 
 ## Problem description
 

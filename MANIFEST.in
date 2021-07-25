@@ -4,8 +4,10 @@ global-exclude *.c
 global-exclude *.h
 global-exclude *.so
 global-exclude *.o
+global-exclude *.out
+global-exclude *.exe
 global-exclude *.dll
-global-exclude *.dynlib
+global-exclude *.dylib
 global-exclude *.directory
 global-exclude *.md
 include pyproject.toml

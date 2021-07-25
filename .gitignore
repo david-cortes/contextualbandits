@@ -4,6 +4,8 @@ __pycache__/
 .directory
 .*so
 .*o
+.*out
+.*dylib
 .*dll
 .*exe
 .*c
@@ -27,3 +29,4 @@ contextualbandits/_cy_utils.cpp
 contextualbandits/*.directory
 example/.ipynb_checkpoints/*
 docs/_build/*
+a.out
