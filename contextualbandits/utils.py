@@ -13,23 +13,23 @@ from ._cy_utils import _matrix_inv_symm, _create_node_counters
 _unexpected_err_msg = "Unexpected error. Please open an issue in GitHub describing what you were doing."
 
 def _convert_decision_function_w_sigmoid(classifier):
-    if 'decision_function' in dir(classifier):
+    if hasattr(classifier, "decision_function"):
         classifier.decision_function_w_sigmoid = types.MethodType(_decision_function_w_sigmoid, classifier)
         #### Note: the weird name is to avoid potential collisions with user-defined methods
-    elif 'predict' in dir(classifier):
+    elif hasattr(classifier, "predict"):
         classifier.decision_function_w_sigmoid = types.MethodType(_decision_function_w_sigmoid_from_predict, classifier)
     else:
         raise ValueError("Classifier must have at least one of 'predict_proba', 'decision_function', 'predict'.")
     return classifier
 
 def _add_method_predict_robust(classifier):
-    if 'predict_proba' in dir(classifier):
+    if hasattr(classifier, "predict_proba"):
         classifier.predict_proba_robust = types.MethodType(_robust_predict_proba, classifier)
-    if 'decision_function_w_sigmoid' in dir(classifier):
+    elif hasattr(classifier, "decision_function_w_sigmoid"):
         classifier.decision_function_robust = types.MethodType(_robust_decision_function_w_sigmoid, classifier)
-    elif 'decision_function' in dir(classifier):
+    elif hasattr(classifier, "decision_function"):
         classifier.decision_function_robust = types.MethodType(_robust_decision_function, classifier)
-    if 'predict' in dir(classifier):
+    if hasattr(classifier, "predict"):
         classifier.predict_robust = types.MethodType(_robust_predict, classifier)
 
     return classifier
@@ -97,24 +97,24 @@ def _check_constructor_input(base_algorithm, nchoices, batch_train=False):
         if len(base_algorithm) != nchoices:
             raise ValueError("Number of classifiers does not match with number of choices.")
         for alg in base_algorithm:
-            if not ('fit' in dir(alg)):
+            if not hasattr(alg, "fit"):
                 raise ValueError("Base algorithms must have a 'fit' method.")
-            if not (('predict_proba' in dir(alg))
-                    or ('decision_function' in dir(alg))
-                    or ('predict' in dir(alg))):
+            if not (hasattr(alg, "predict_proba")
+                    or hasattr(alg, "decision_function")
+                    or hasattr(alg, "predict")):
                 raise ValueError("Base algorithms must have at least one of " +
                                  "'predict_proba', 'decision_function', 'predict'.")
             if batch_train:
-                if not ('partial_fit' in dir(alg)):
+                if not hasattr(alg, "partial_fit"):
                     raise ValueError("Using 'batch_train' requires base " +
                                      "algorithms with 'partial_fit' method.")
     else:
-        assert ('fit' in dir(base_algorithm))
-        assert (('predict_proba' in dir(base_algorithm))
-                or ('decision_function' in dir(base_algorithm))
-                or ('predict' in dir(base_algorithm)))
+        assert hasattr(base_algorithm, "fit")
+        assert (hasattr(base_algorithm, "predict_proba")
+                or hasattr(base_algorithm, "decision_function")
+                or hasattr(base_algorithm, "predict"))
         if batch_train:
-            assert 'partial_fit' in dir(base_algorithm)
+            assert hasattr(base_algorithm, "partial_fit")
 
     assert nchoices >= 2
     assert isinstance(nchoices, int)
@@ -151,8 +151,8 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
         assert len(beta_prior) == 2
         assert len(beta_prior[0]) == 2
         assert isinstance(beta_prior[1], int)
-        assert isinstance(beta_prior[0][0], int) or isinstance(beta_prior[0][0], float)
-        assert isinstance(beta_prior[0][1], int) or isinstance(beta_prior[0][1], float)
+        assert isinstance(beta_prior[0][0], (int, float))
+        assert isinstance(beta_prior[0][1], (int, float))
         assert (beta_prior[0][0] > 0.) and (beta_prior[0][1] > 0.)
         out = beta_prior
     return out
@@ -363,13 +363,11 @@ def _beta_prior_by_arm(beta_prior, nchoices):
         raise ValueError(_unexpected_err_msg)
 
 def is_from_this_module(base):
-    return (isinstance(base, _BootstrappedClassifierBase) or
-            isinstance(base, _LinUCB_n_TS_single) or
-            isinstance(base, _LogisticUCB_n_TS_single) or
-            isinstance(base, _TreeUCB_n_TS_single))
+    return isinstance(base, (_BootstrappedClassifierBase, _BootstrappedClassifierBase,
+                             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, _TreeUCB_n_TS_single))
 
 def _make_robust_base(base, partialfit):
-    if 'predict_proba' not in dir(base):
+    if hasattr(base, "predict_proba"):
         base = _convert_decision_function_w_sigmoid(base)
     if partialfit:
         base = _add_method_predict_robust(base)
@@ -944,16 +942,16 @@ class _OneVsRest:
                                               size=preds.shape[0])
                 return None
 
-        if 'predict_proba_robust' in dir(self.algos[choice]):
+        if hasattr(self.algos[choice], "predict_proba_robust"):
             preds[:, choice] = self.algos[choice].predict_proba_robust(X)[:, 1]
-        elif 'predict_proba' in dir(self.algos[choice]):
+        elif hasattr(self.algos[choice], "predict_proba"):
             preds[:, choice] = self.algos[choice].predict_proba(X)[:, 1]
         else:
             if depth == 0:
                 raise ValueError("This requires a classifier with method 'predict_proba'.")
-            if 'decision_function_robust' in dir(self.algos[choice]):
+            if hasattr(self.algos[choice], "decision_function_robust"):
                 preds[:, choice] = self.algos[choice].decision_function_robust(X)
-            elif 'decision_function_w_sigmoid' in dir(self.algos[choice]):
+            elif hasattr(self.algos[choice], "decision_function_w_sigmoid"):
                 preds[:, choice] = self.algos[choice].decision_function_w_sigmoid(X)
             else:
                 preds[:, choice] = self.algos[choice].predict(X)

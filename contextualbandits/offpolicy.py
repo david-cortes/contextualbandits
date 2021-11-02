@@ -121,7 +121,7 @@ class DoublyRobustEstimator:
         else:
             assert isinstance(nchoices, int)
             assert nchoices > 2
-            assert ('fit' in dir(base_algorithm)) and ('predict' in dir(base_algorithm))
+            assert hasattr(base_algorithm, "fit") and hasattr(base_algorithm, "predict")
         
         if c is not None:
             assert isinstance(c, float)
@@ -132,7 +132,7 @@ class DoublyRobustEstimator:
         if type(reward_estimator) == np.ndarray:
             assert reward_estimator.shape[1] == nchoices
         else:
-            assert ('predict_proba_separate' in dir(reward_estimator)) or ('predict_proba' in dir(reward_estimator))
+            assert hasattr(reward_estimator, "predict_proba_separate") or hasattr(reward_estimator, "predict_proba")
 
         if beta_prior is not None:
             beta_prior = _check_beta_prior(beta_prior, nchoices, 2)
@@ -175,9 +175,9 @@ class DoublyRobustEstimator:
         
         if type(self.reward_estimator) == np.ndarray:
             C = self.reward_estimator
-        elif 'predict_proba_separate' in dir(self.reward_estimator):
+        elif hasattr(self.reward_estimator, "predict_proba_separate"):
             C = -self.reward_estimator.predict_proba_separate(X)
-        elif 'predict_proba' in dir(self.reward_estimator):
+        elif hasattr(self.reward_estimator, "predict_proba"):
             reward_estimator = \
                 SeparateClassifiers(self.reward_estimator, self.nchoices,
                     beta_prior = self.beta_prior, smoothing = self.smoothing,

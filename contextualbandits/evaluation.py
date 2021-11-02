@@ -228,11 +228,11 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
         assert reward_estimator.shape[0]==X.shape[0]
         rhat_new = reward_estimator[:, 0]
         rhat_old = reward_estimator[:, 1]
-    elif 'predict_proba_separate' in dir(reward_estimator):
+    elif hasattr(reward_estimator, "predict_proba_separate"):
         rhat = reward_estimator.predict_proba_separate(X)
         rhat_new = rhat[np.arange(rhat.shape[0]), pred]
         rhat_old = rhat[np.arange(rhat.shape[0]), a]
-    elif 'predict_proba' in dir(reward_estimator):
+    elif hasattr(reward_estimator, "predict_proba"):
         reward_estimator = SeparateClassifiers(reward_estimator, nchoices, random_state=rs)
         reward_estimator.fit(X, a, r)
         rhat = reward_estimator.predict_proba_separate(X)

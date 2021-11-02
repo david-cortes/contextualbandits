@@ -49,7 +49,7 @@ class _BasePolicy:
 
         if assign_algo:
             self.base_algorithm = base_algorithm
-            if ("warm_start" in dir(self.base_algorithm)) and (self.base_algorithm.warm_start):
+            if hasattr(self.base_algorithm, "warm_start") and (self.base_algorithm.warm_start):
                 self.has_warm_start = True
             else:
                 self.has_warm_start = False
@@ -108,7 +108,7 @@ class _BasePolicy:
 
     def _make_bootstrapped(self, base_algorithm, percentile,
                            ts_byrow, ts_weighted):
-        if "predict_proba" in dir(base_algorithm):
+        if hasattr(base_algorithm, "predict_proba"):
             return _BootstrappedClassifier_w_predict_proba(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
@@ -117,7 +117,7 @@ class _BasePolicy:
                 ts_byrow = ts_byrow,
                 ts_weighted = ts_weighted
                 )
-        elif "decision_function" in dir(base_algorithm):
+        elif hasattr(base_algorithm, "decision_function"):
             return _BootstrappedClassifier_w_decision_function(
                 base_algorithm, self.nsamples, percentile,
                 self.batch_train, self.batch_sample_method,
@@ -288,7 +288,7 @@ class _BasePolicy:
 
         if (fitted_classifier is not None) and (self._check_is_from_this_module()):
             raise ValueError("Cannot pass 'fitted_classifier' for classes that do not take a 'base_algorithm'.")
-        if isinstance(self, BootstrappedUCB) or isinstance(self, BootstrappedTS):
+        if isinstance(self, (BootstrappedUCB, BootstrappedTS)):
             if (fitted_classifier is not None)  and (not isinstance(fitted_classifier, _BootstrappedClassifierBase)):
                 raise ValueError("Cannot pass 'fitted_classifier' for bootstrapped policies.")
             elif self._base_bootstrapped is None:
@@ -327,13 +327,8 @@ class _BasePolicy:
         return self
 
     def _check_is_from_this_module(self):
-        return \
-            isinstance(self, LogisticUCB) or \
-            isinstance(self, LogisticTS) or \
-            isinstance(self, LinUCB) or \
-            isinstance(self, LinTS) or \
-            isinstance(self, PartitionedUCB) or \
-            isinstance(self, PartitionedTS)
+        return isinstance(self, (LogisticUCB, LogisticTS, LinUCB, LinTS,
+                                 PartitionedUCB, PartitionedTS))
 
     def _check_new_arm_name(self, arm_name):
         if self.choice_names is None and arm_name is not None:
@@ -481,7 +476,7 @@ class _BasePolicy:
         """
         if not self.batch_train:
             raise ValueError("Must pass 'batch_train' = 'True' to use '.partial_fit'.")
-        if '_oracles' in dir(self):
+        if hasattr(self, "_oracles"):
             X, a, r =_check_fit_input(X, a, r, self.choice_names)
             self._oracles.partial_fit(X, a, r)
             self.is_fitted = True
@@ -1651,7 +1646,7 @@ class _ActivePolicy(_BasePolicy):
 
             if self._oracles.should_calculate_grad(choice) or self._force_fit:
                 if ( (self._get_grad_norms == _get_logistic_grads_norms)
-                      and ("coef_" not in dir(self._oracles.algos[choice]))
+                     and (not hasattr(self._oracles.algos[choice], "coef_"))
                     ):
                     grad_norms = \
                         r_grad(X,
