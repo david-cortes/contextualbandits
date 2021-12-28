@@ -1122,8 +1122,11 @@ class _LogisticUCB_n_TS_single:
         elif np.unique(y).shape[0] <= 1:
             return self
         self.model.fit(X, y)
-        var = self.model.predict_proba(X)[:,1]
-        var = var * (1 - var)   
+        ### Note: variance can be calculated as p*(1-p) or as exp(logodds)/(1+exp(logodds))^2
+        ### For negative logodds, both should give the same results, but for large and positive
+        ### logodds, the second formula is more numerically robust.
+        var = np.exp(self.model.decision_function(X)).reshape(-1)
+        var = var / ((1. + var) ** 2)
         n = X.shape[1]
         self.Sigma = np.zeros((n+self.fit_intercept, n+self.fit_intercept), dtype=ctypes.c_double)
         X, Xcsr = self._process_X(X)
