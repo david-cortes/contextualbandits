@@ -937,7 +937,7 @@ class LogisticUCB(_BasePolicyWithExploit):
 
     Logistic regression classifier which constructs an upper bound on the
     predicted probabilities through a confidence interval calculated from
-    the variance-covariance matrix of the predictors.
+    the variance-covariance matrix of the fitted coefficients.
 
     Note
     ----
@@ -1070,8 +1070,9 @@ class LogisticTS(_BasePolicyWithExploit):
     Logistic Regression with Thompson Sampling
 
     Logistic regression classifier which either samples its coefficients using
-    the variance-covariance matrix of the predictors, or which samples
-    predicted values from a confidence interval as a faster alternative.
+    the variance-covariance matrix of the fitted non-sampled coefficients,
+    or which samples predicted values from a confidence interval built from the
+    same variance-covariance matrix as a faster alternative.
 
     Note
     ----
