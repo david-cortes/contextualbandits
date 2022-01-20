@@ -1130,6 +1130,20 @@ class _LogisticUCB_n_TS_single:
         n = X.shape[1]
         self.Sigma = np.zeros((n+self.fit_intercept, n+self.fit_intercept), dtype=ctypes.c_double)
         X, Xcsr = self._process_X(X)
+        ### TODO: this could use Newton's method to update an inverse so as to avoid
+        ### recomputing it at every iteration. That way it also would avoid having to
+        ### fully recompute the sum, since it's only necessary to have the 'X' matrix
+        ### and the per-row prediction variance from above.
+        ### Assuming that 'Sigma' has been computed at a previous iteration, a Newton
+        ### update would be as follows (operations ~ O(m*n^2 + n^3), worst part is the regularization):
+        ### - M <- (Sigma * t(X)) * diag(sqrt(var))
+        ### - Sigma_new <- 2*Sigma - M*t(M) - lambda*(Sigma*Sigma)
+        ### Most problematic part there is adding the regularization, but as the values are
+        ### not meant to change too much, perhaps it could reuse previously-computed terms or
+        ### perhaps approximate it by some constant number of similar to reduce the operations
+        ### to ~ O(m*n^2).
+        ### For the first estimate, it could use Sherman-Morrison or Neumann's
+        ### method instead of a full Cholesky.
         _wrapper_double.update_matrices_noinv(
             X,
             np.empty(0, dtype=ctypes.c_double),

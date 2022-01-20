@@ -10,7 +10,10 @@ class build_ext_subclass( build_ext ):
             for e in self.extensions:
                 e.extra_compile_args += ['/O2', '/openmp']
         else:
-            self.add_march_native()
+            if not self.check_cflags_contain_arch():
+                self.add_march_native("c")
+            if not self.check_cxxflags_contain_arch():
+                self.add_march_native("c++")
             self.add_openmp_linkage() ### for c++ only
 
             for e in self.extensions:
@@ -23,15 +26,33 @@ class build_ext_subclass( build_ext ):
 
         build_ext.build_extensions(self)
 
-    def add_march_native(self):
+    def check_cflags_contain_arch(self):
+        if "CFLAGS" in os.environ:
+            arch_list = ["-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3", "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2", "-mavx", "-mavx2"]
+            for flag in arch_list:
+                if flag in os.environ["CFLAGS"]:
+                    return True
+        return False
+
+    def check_cxxflags_contain_arch(self):
+        if "CXXFLAGS" in os.environ:
+            arch_list = ["-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3", "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2", "-mavx", "-mavx2"]
+            for flag in arch_list:
+                if flag in os.environ["CXXFLAGS"]:
+                    return True
+        return False
+
+    def add_march_native(self, lang):
         arg_march_native = "-march=native"
         arg_mcpu_native = "-mcpu=native"
         if self.test_supports_compile_arg(arg_march_native):
             for e in self.extensions:
-                e.extra_compile_args.append(arg_march_native)
+                if (e.language is None and lang == "c") or (e.language == lang):
+                    e.extra_compile_args.append(arg_march_native)
         elif self.test_supports_compile_arg(arg_mcpu_native):
             for e in self.extensions:
-                e.extra_compile_args.append(arg_mcpu_native)
+                if (e.language is None and lang == "c") or (e.language == lang):
+                    e.extra_compile_args.append(arg_mcpu_native)
 
     def add_openmp_linkage(self):
         arg_omp1 = "-fopenmp"
@@ -95,7 +116,7 @@ setup(
         'joblib>=0.13',
         'cython'
     ],
-    version = '0.3.17',
+    version = '0.3.17-1',
     description = 'Python Implementations of Algorithms for Contextual Bandits',
     author = 'David Cortes',
     author_email = 'david.cortes.rivera@gmail.com',
