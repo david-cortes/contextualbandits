@@ -35,6 +35,7 @@ pip install contextualbandits
 or, by specifying some compilation flag for architecture:
 ```
 export CFLAGS="-march=x86-64"
+export CXXFLAGS="-march=x86-64"
 pip install contextualbandits
 ```
 ** *
