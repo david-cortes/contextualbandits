@@ -25,19 +25,17 @@ Fedora Linux users can install package using dnf package manager:
 _Note: as of version 0.2.0, this package contains Cython code which needs to be compiled - meaning, it requires a C compiler and setting up Python's setuptools to use it. If for some reason the latest version fails to install in your setup, it's still possible to install an earlier version which was pure-python with `pip install contextualbandits==0.1.8.5` (also available in this GitHub page under branch `no_cython`)._
 
 ** *
-**IMPORTANT:** the setup script will try to add compilation flag `-march=native`. This instructs the compiler to tune the package for the CPU in which it is being installed, but the result might not be usable in other computers. If building a binary wheel of this package or putting it into a docker image which will be used in different machines, this can be overriden by manually supplying compilation `CFLAGS` and `CXXFLAGS` as environment variables with something related to architecture. For maximum compatibility (but slowest speed), assuming `x86-64` computers, it's possible to do something like this:
+**IMPORTANT:** the setup script will try to add compilation flag `-march=native`. This instructs the compiler to tune the package for the CPU in which it is being installed (by e.g. using AVX instructions if available), but the result might not be usable in other computers. If building a binary wheel of this package or putting it into a docker image which will be used in different machines, this can be overriden either by (a) defining an environment variable `DONT_SET_MARCH=1`, or by (b) manually supplying compilation `CFLAGS` as an environment variable with something related to architecture. For maximum compatibility (but slowest speed), it's possible to do something like this:
 
 ```
-export CFLAGS="-msse2"
-export CXXFLAGS="-msse2"
+export DONT_SET_MARCH=1
 pip install contextualbandits
 ```
 
-or for creating wheels:
+or, by specifying some compilation flag for architecture:
 ```
-export CFLAGS="-msse2"
-export CXXFLAGS="-msse2"
-python setup.py bwheel
+export CFLAGS="-march=x86-64"
+pip install contextualbandits
 ```
 ** *
 
