@@ -89,7 +89,7 @@ def evaluateRejectionSampling(policy, X, a, r, online=True, partial_fit=False,
         
         try:
             from tqdm import tqdm as looper
-        except:
+        except Exception:
             def looper(iterator, desc=None):
                 return(iterator)
                 

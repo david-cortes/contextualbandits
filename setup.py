@@ -101,7 +101,7 @@ class build_ext_subclass( build_ext ):
                     cmd = list(self.compiler.compiler_cxx)
                 else:
                     cmd = self.compiler.compiler_cxx
-            except:
+            except Exception:
                 cmd = self.compiler.compiler_cxx
             val_good = subprocess.call(cmd + [fname])
             if with_omp:
@@ -110,13 +110,13 @@ class build_ext_subclass( build_ext ):
             try:
                 val = subprocess.call(cmd + comm + [fname])
                 is_supported = (val == val_good)
-            except:
+            except Exception:
                 is_supported = False
-        except:
+        except Exception:
             pass
         try:
             os.remove(fname)
-        except:
+        except Exception:
             pass
         return is_supported
 
@@ -131,7 +131,7 @@ setup(
         'joblib>=0.13',
         'cython'
     ],
-    version = '0.3.17-2',
+    version = '0.3.17-3',
     description = 'Python Implementations of Algorithms for Contextual Bandits',
     author = 'David Cortes',
     author_email = 'david.cortes.rivera@gmail.com',

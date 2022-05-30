@@ -336,7 +336,7 @@ class _BasePolicy:
         if arm_name is None and self.choice_names is not None:
             try:
                 arm_name = self.choice_names[-1] + 1
-            except:
+            except Exception:
                 raise ValueError("Must provide an arm name when using named arms.")
         return arm_name
 

@@ -37,25 +37,25 @@ def _add_method_predict_robust(classifier):
 def _robust_predict(self, X):
     try:
         return self.predict(X).reshape(-1)
-    except:
+    except Exception:
         return np.zeros(X.shape[0])
 
 def _robust_predict_proba(self, X):
     try:
         return self.predict_proba(X)
-    except:
+    except Exception:
         return np.zeros((X.shape[0], 2))
 
 def _robust_decision_function(self, X):
     try:
         return self.decision_function(X).reshape(-1)
-    except:
+    except Exception:
         return np.zeros(X.shape[0])
 
 def _robust_decision_function_w_sigmoid(self, X):
     try:
         return self.decision_function_w_sigmoid(X).reshape(-1)
-    except:
+    except Exception:
         return np.zeros(X.shape[0])
 
 def _decision_function_w_sigmoid(self, X):
@@ -290,7 +290,7 @@ def _check_autograd_supported(base_algorithm):
     try:
         if base_algorithm.class_weight is not None:
             raise ValueError("Automatic gradients for LogisticRegression not supported with 'class_weight'.")
-    except:
+    except Exception:
         pass
 
 def _gen_random_grad_norms(X, n_pos, n_neg, random_state):
@@ -995,7 +995,7 @@ class _OneVsRest:
             return True
         try:
             return bool(self.beta_counters[0, choice])
-        except:
+        except Exception:
             return True
 
     def get_n_pos(self, choice):

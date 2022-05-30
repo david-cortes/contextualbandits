@@ -167,7 +167,7 @@ class DoublyRobustEstimator:
         """
         try:
             from costsensitive import RegressionOneVsRest, WeightedAllPairs
-        except:
+        except Exception:
             raise ValueError("This functionality requires package 'costsensitive'.\nCan be installed with 'pip install costsensitive'.")
         p = _check_1d_inp(p)
         assert p.shape[0] == X.shape[0]
@@ -286,7 +286,7 @@ class OffsetTree:
                  random_state = 1, njobs = -1):
         try:
             from costsensitive import _BinTree
-        except:
+        except Exception:
             raise ValueError("This functionality requires package 'costsensitive'.\nCan be installed with 'pip install costsensitive'.")
         _check_constructor_input(base_algorithm, nchoices)
         self.base_algorithm = base_algorithm
