@@ -1087,6 +1087,12 @@ class _LinUCB_n_TS_single:
         if not self.is_fitted:
             return np.zeros(X.shape[0])
         return self.predict(X, exploit = True)
+    
+    def _robust_predict(self, X):
+        try:
+            return self.predict(X).reshape(-1)
+        except Exception:
+            return np.zeros(X.shape[0])
 
 class _LogisticUCB_n_TS_single:
     def __init__(self, lambda_=1., fit_intercept=True, alpha=0.95,
