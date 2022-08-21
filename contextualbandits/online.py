@@ -3314,7 +3314,7 @@ class ParametricTS(_BasePolicyWithExploit):
         assert beta_prior_ts[0] >= 0.
         assert beta_prior_ts[1] >= 0.
         self.beta_prior_ts = beta_prior_ts
-        self.force_counters = True
+        self._force_counters = True
 
     def reset_beta_prior_ts(self, beta_prior_ts=(0.,0.)):
         """
