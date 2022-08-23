@@ -43,7 +43,7 @@ example/policy_evaluation.ipynb>`_
 
 Serializing (pickling) objects
 =================================
-Don't use `pickle` to userialize objects from this package as it's likely to fail. Use `dill` instead, which has the same syntax and is able to serialize more types of objects.
+Don't use `pickle` to userialize objects from this package as it's likely to fail. Use `cloudpickle` or `dill` instead, which have the same syntax and is able to serialize more types of objects.
 
 
 .. toctree::

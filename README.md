@@ -148,15 +148,15 @@ Also included is a linear regression class (`contextualbandits.linreg.LinearRegr
 
 ## Serializing (pickling) objects
 
-Using `pickle` to serialize objects from this library is likely to fail. Use `dill` instead, which has the same syntax as pickle, e.g.:
+Using `pickle` to serialize objects from this library is likely to fail. Use `cloudpickle` or `dill` instead, which have the same syntax as pickle, e.g.:
 ```python
-import dill
+import cloudpickle
 from sklearn.linear_model import SGDClassifier
 from contextualbandits.online import BootstrappedUCB
 
 m = BootstrappedUCB(SGDClassifier(loss="log"), nchoices = 5, batch_train = True)
-dill.dump(m, open("saved_ucb_model.dill", "wb"))
-m = dill.load(open("saved_ucb_model.dill", "rb"))
+cloudpickle.dump(m, open("saved_ucb_model.pkl", "wb"))
+m = cloudpickle.load(open("saved_ucb_model.pkl", "rb"))
 ```
 
 ## Some comments
