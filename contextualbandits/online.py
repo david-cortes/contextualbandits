@@ -1890,8 +1890,18 @@ class AdaptiveGreedy(_ActivePolicy):
                  batch_train=False, refit_buffer=None,  deep_copy_buffer=True,
                  assume_unique_reward=False, active_choice=None, f_grad_norm='auto',
                  case_one_class='auto', random_state=None, njobs=-1):
+        def calc_num_choices(nchoices):
+            if isinstance(nchoices, (int, float)):
+                return nchoices
+            elif isinstance(nchoices, (list, tuple)):
+                return len(nchoices)
+            else:
+                try:
+                    return nchoices.shape[0]
+                except:
+                    return nchoices
         if beta_prior == "auto":
-            beta_prior = ((3./nchoices, 4.), 2)
+            beta_prior = ((3./calc_num_choices(nchoices), 4.), 2)
         self._add_common_params(base_algorithm, beta_prior, smoothing, noise_to_smooth, njobs, nchoices,
                                 batch_train, refit_buffer, deep_copy_buffer,
                                 assume_unique_reward, random_state)
@@ -1901,10 +1911,7 @@ class AdaptiveGreedy(_ActivePolicy):
             assert isinstance(percentile, int)
             assert (percentile > 0) and (percentile < 100)
         if initial_thr == 'auto':
-            if not isinstance(nchoices, list):
-                initial_thr = 1.0 / (np.sqrt(nchoices) * 2.0)
-            else:
-                initial_thr = 1.0 / (np.sqrt(len(nchoices)) * 2.0)
+            initial_thr = 1.0 / (np.sqrt(self.nchoices) * 2.0)
         assert isinstance(initial_thr, float)
         assert window_size > 0
         self.window_size = window_size
