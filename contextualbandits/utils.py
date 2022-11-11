@@ -717,7 +717,7 @@ class _OneVsRest:
         self.refit_buffer = refit_buffer
         self.deep_copy = deep_copy
         self.partialfit = bool(partialfit)
-        self.force_counters = bool(force_counters)
+        self.force_counters = bool(force_counters) or self.partialfit
         if (self.force_counters) or (self.thr[0] and not self.force_fit):
             ## in case it has beta prior, keeps track of the counters until no longer needed
             self.alpha = alpha
@@ -903,7 +903,7 @@ class _OneVsRest:
                 self.algos[choice].partial_fit(xclass, yclass, classes = [0, 1])
 
         ## update the beta counters if needed
-        if (self.force_counters):
+        if self.force_counters:
             self._update_beta_counters(yclass, choice)
 
     def _filter_arm_data(self, X, a, r, choice):
@@ -946,8 +946,12 @@ class _OneVsRest:
         ## so the prediction will not be exactly zero.
         if (
             not self.force_unfit_predict
-            and self.smooth is not None and self.counters[0, choice] == 0
             and not isinstance(self.algos[choice], _FixedPredictor)
+            and (
+                (self.smooth is not None and self.counters[0, choice] == 0)
+                or
+                (self.force_counters and self.beta_counters[1,choice] == 0 and self.beta_counters[2,choice] == 0)
+            )
         ):
             preds[:, choice] = 0
             return None
