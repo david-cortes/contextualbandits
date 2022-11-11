@@ -944,7 +944,11 @@ class _OneVsRest:
 
         ## Note: if it has smoothing, it will end up applying smoothing afterwards,
         ## so the prediction will not be exactly zero.
-        if not self.force_unfit_predict and self.smooth is not None and self.counters[0, choice] == 0:
+        if (
+            not self.force_unfit_predict
+            and self.smooth is not None and self.counters[0, choice] == 0
+            and not isinstance(self.algos[choice], _FixedPredictor)
+        ):
             preds[:, choice] = 0
             return None
 
