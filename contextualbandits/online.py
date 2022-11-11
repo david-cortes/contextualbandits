@@ -304,7 +304,7 @@ class _BasePolicy:
         refit_buffer_X, refit_buffer_r = \
             _check_refit_inp(refit_buffer_X, refit_buffer_r, self.refit_buffer)
         arm_name = self._check_new_arm_name(arm_name)
-        if isinstance(self, _ActivePolicy):
+        if isinstance(self, _ActivePolicy) and hasattr(self, "_get_grad_norms"):
             if isinstance(self._get_grad_norms, list):
                 if not callable(f_grad_norm):
                     raise ValueError("'f_grad_norm' must be a function.")
