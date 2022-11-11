@@ -2,15 +2,15 @@
 
 import numpy as np, warnings, ctypes
 from .utils import _check_constructor_input, _check_beta_prior, \
-            _check_smoothing, _check_fit_input, _check_X_input, _check_1d_inp, \
-            _ZeroPredictor, _OnePredictor, _OneVsRest,\
+            _check_smoothing, _check_fit_input, _check_X_input, \
+            _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
             _BootstrappedClassifier_w_decision_function, _check_njobs, \
             _check_bools, _check_refit_buffer, _check_refit_inp, _check_random_state, \
             _check_autograd_supported, _get_logistic_grads_norms, \
             _gen_random_grad_norms, _gen_zero_norms, \
             _apply_softmax, _apply_inverse_sigmoid, \
-            _beta_prior_by_arm, _unexpected_err_msg, \
+            _beta_prior_by_arm, \
             _LinUCB_n_TS_single, _LogisticUCB_n_TS_single, \
             _TreeUCB_n_TS_single
 from ._cy_utils import _choice_over_rows, topN_byrow, topN_byrow_softmax
