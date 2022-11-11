@@ -294,7 +294,7 @@ class _BasePolicy:
             elif self._base_bootstrapped is None:
                 raise ValueError("Cannot append arm for bootstrapped policies with different 'base_algorithm' per arm.")
             else:
-                fitted_classifier = self._make_bootstrapped(base_algorithm, self._percentile,
+                fitted_classifier = self._make_bootstrapped(self.base_algorithm, self._percentile,
                                                             self._ts_byrow, self._ts_weighted)
 
         if isinstance(self.base_algorithm, list):
