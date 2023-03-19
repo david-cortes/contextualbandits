@@ -1,3 +1,4 @@
+#cython: language_level=2
 import ctypes
 from scipy.linalg.cython_blas cimport (
     ssyrk as tsyrk,

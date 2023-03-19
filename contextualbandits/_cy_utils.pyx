@@ -1,3 +1,4 @@
+#cython: language_level=3
 import numpy as np
 cimport numpy as np
 import ctypes
@@ -65,7 +66,7 @@ def _matrix_inv_symm(
     cdef double *ptr_X = &X[0,0]
     cdef int n = X.shape[0]
     cdef int *ptr_n = &n
-    cdef char lo = 'L'
+    cdef char lo = 76#'L'
     cdef char *ptr_lo = &lo
     cdef int ignore
     cdef int *ptr_ignore = &ignore

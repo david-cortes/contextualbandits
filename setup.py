@@ -4,6 +4,17 @@ import numpy as np
 from sys import platform
 import sys, os, subprocess, warnings, re
 
+## Modify this to make the output of the compilation tests more verbose
+silent_tests = not (("verbose" in sys.argv)
+                    or ("-verbose" in sys.argv)
+                    or ("--verbose" in sys.argv))
+
+## Workaround for python<=3.9 on windows
+try:
+    EXIT_SUCCESS = os.EX_OK
+except AttributeError:
+    EXIT_SUCCESS = 0
+
 class build_ext_subclass( build_ext ):
     def build_extensions(self):
         if self.compiler.compiler_type == 'msvc':
@@ -28,7 +39,11 @@ class build_ext_subclass( build_ext ):
 
     def check_cflags_contain_arch(self):
         if "CFLAGS" in os.environ:
-            arch_list = ["-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3", "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2", "-mavx", "-mavx2"]
+            arch_list = [
+                "-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3",
+                "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2",
+                "-mavx", "-mavx2", "-mavx512"
+            ]
             for flag in arch_list:
                 if flag in os.environ["CFLAGS"]:
                     return True
@@ -36,7 +51,11 @@ class build_ext_subclass( build_ext ):
 
     def check_cxxflags_contain_arch(self):
         if "CXXFLAGS" in os.environ:
-            arch_list = ["-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3", "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2", "-mavx", "-mavx2"]
+            arch_list = [
+                "-march", "-mcpu", "-mtune", "-msse", "-msse2", "-msse3",
+                "-mssse3", "-msse4", "-msse4a", "-msse4.1", "-msse4.2",
+                "-mavx", "-mavx2", "-mavx512"
+            ]
             for flag in arch_list:
                 if flag in os.environ["CXXFLAGS"]:
                     return True
@@ -59,31 +78,56 @@ class build_ext_subclass( build_ext ):
 
     def add_openmp_linkage(self):
         arg_omp1 = "-fopenmp"
-        arg_omp2 = "-qopenmp"
-        arg_omp3 = "-xopenmp"
+        arg_omp2 = "-fopenmp=libomp"
+        args_omp3 = ["-fopenmp=libomp", "-lomp"]
+        arg_omp4 = "-qopenmp"
+        arg_omp5 = "-xopenmp"
+        is_apple = sys.platform[:3].lower() == "dar"
         args_apple_omp = ["-Xclang", "-fopenmp", "-lomp"]
         args_apple_omp2 = ["-Xclang", "-fopenmp", "-L/usr/local/lib", "-lomp", "-I/usr/local/include"]
+        has_brew_omp = False
+        if is_apple:
+            res_brew_pref = subprocess.run(["brew", "--prefix", "libomp"], capture_output=silent_tests)
+            if res_brew_pref.returncode == EXIT_SUCCESS:
+                has_brew_omp = True
+                brew_omp_prefix = res_brew_pref.stdout.decode().strip()
+                args_apple_omp3 = ["-Xclang", "-fopenmp", f"-L{brew_omp_prefix}/lib", "-lomp", f"-I{brew_omp_prefix}/include"]
+
+
         if self.test_supports_compile_arg(arg_omp1, with_omp=True):
             for e in self.extensions:
                 e.extra_compile_args.append(arg_omp1)
                 e.extra_link_args.append(arg_omp1)
-        elif (sys.platform[:3].lower() == "dar") and self.test_supports_compile_arg(args_apple_omp, with_omp=True):
+        elif is_apple and self.test_supports_compile_arg(args_apple_omp, with_omp=True):
             for e in self.extensions:
                 e.extra_compile_args += ["-Xclang", "-fopenmp"]
                 e.extra_link_args += ["-lomp"]
-        elif (sys.platform[:3].lower() == "dar") and self.test_supports_compile_arg(args_apple_omp2, with_omp=True):
+        elif is_apple and self.test_supports_compile_arg(args_apple_omp2, with_omp=True):
             for e in self.extensions:
                 e.extra_compile_args += ["-Xclang", "-fopenmp"]
                 e.extra_link_args += ["-L/usr/local/lib", "-lomp"]
                 e.include_dirs += ["/usr/local/include"]
+        elif is_apple and has_brew_omp and self.test_supports_compile_arg(args_apple_omp3, with_omp=True):
+            for e in self.extensions:
+                e.extra_compile_args += ["-Xclang", "-fopenmp"]
+                e.extra_link_args += [f"-L{brew_omp_prefix}/lib", "-lomp"]
+                e.include_dirs += [f"{brew_omp_prefix}/include"]
         elif self.test_supports_compile_arg(arg_omp2, with_omp=True):
             for e in self.extensions:
-                e.extra_compile_args.append(arg_omp2)
-                e.extra_link_args.append(arg_omp2)
-        elif self.test_supports_compile_arg(arg_omp3, with_omp=True):
+                e.extra_compile_args += ["-fopenmp=libomp"]
+                e.extra_link_args += ["-fopenmp"]
+        elif self.test_supports_compile_arg(args_omp3, with_omp=True):
             for e in self.extensions:
-                e.extra_compile_args.append(arg_omp3)
-                e.extra_link_args.append(arg_omp3)
+                e.extra_compile_args += ["-fopenmp=libomp"]
+                e.extra_link_args += ["-fopenmp", "-lomp"]
+        elif self.test_supports_compile_arg(arg_omp4, with_omp=True):
+            for e in self.extensions:
+                e.extra_compile_args.append(arg_omp4)
+                e.extra_link_args.append(arg_omp4)
+        elif self.test_supports_compile_arg(arg_omp5, with_omp=True):
+            for e in self.extensions:
+                e.extra_compile_args.append(arg_omp5)
+                e.extra_link_args.append(arg_omp5)
 
     def test_supports_compile_arg(self, comm, with_omp=False):
         is_supported = False
@@ -103,13 +147,12 @@ class build_ext_subclass( build_ext ):
                     cmd = self.compiler.compiler_cxx
             except Exception:
                 cmd = self.compiler.compiler_cxx
-            val_good = subprocess.call(cmd + [fname])
             if with_omp:
                 with open(fname, "w") as ftest:
                     ftest.write(u"#include <omp.h>\nint main(int argc, char**argv) {return 0;}\n")
             try:
-                val = subprocess.call(cmd + comm + [fname])
-                is_supported = (val == val_good)
+                val = subprocess.run(cmd + comm + [fname], capture_output=silent_tests).returncode
+                is_supported = (val == EXIT_SUCCESS)
             except Exception:
                 is_supported = False
         except Exception:
@@ -131,7 +174,7 @@ setup(
         'joblib>=0.13',
         'cython'
     ],
-    version = '0.3.20',
+    version = '0.3.20-1',
     description = 'Python Implementations of Algorithms for Contextual Bandits',
     author = 'David Cortes',
     author_email = 'david.cortes.rivera@gmail.com',
