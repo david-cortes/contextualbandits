@@ -8,7 +8,9 @@ For details about the implementations, or if you would like to cite this in your
 
 ## Installation
 
-Package is available on PyPI, can be installed with 
+**Note:** requires C/C++ compilers configured for Python. See [this guide](https://github.com/david-cortes/installing-optimized-libraries) for instructions.
+
+Package is available on PyPI, can be installed with:
 
 ```pip install contextualbandits```
 
