@@ -49,12 +49,6 @@ class _BasePolicy:
 
         if assign_algo:
             self.base_algorithm = base_algorithm
-            if hasattr(self.base_algorithm, "warm_start") and (self.base_algorithm.warm_start):
-                self.has_warm_start = True
-            else:
-                self.has_warm_start = False
-        else:
-            self.has_warm_start = False
 
         self.refit_buffer = _check_refit_buffer(refit_buffer, self.batch_train)
         self.deep_copy_buffer = bool(deep_copy_buffer)
@@ -174,7 +168,6 @@ class _BasePolicy:
                                 self._beta_prior_by_arm[0],
                                 self._beta_prior_by_arm[1],
                                 self._beta_prior_by_arm[2])
-        self.has_warm_start = False
         return self
 
     def _get_drop_ix(self, arm_name):
@@ -374,7 +367,7 @@ class _BasePolicy:
         )
 
     ### TODO: add option for automatically adding new arms if they appear in the data
-    def fit(self, X, a, r, warm_start=False, continue_from_last=False):
+    def fit(self, X, a, r, continue_from_last=False):
         """
         Fits the base algorithm (one per class [and per sample if bootstrapped]) to partially labeled data.
 
@@ -386,18 +379,6 @@ class _BasePolicy:
             Arms or actions that were chosen for each observations.
         r : array(n_samples, ), {0,1}
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
-        warm_start : bool
-            Whether to use the results of previous calls to 'fit' as a start
-            for fitting to the 'X' data passed here. This will only be available
-            if the base classifier has a property ``warm_start`` too and that
-            property is also set to 'True'. You can double-check that it's
-            recognized as such by checking this object's property
-            ``has_warm_start``. Passing 'True' when the classifier doesn't
-            support warm start despite having the property might slow down
-            things.
-            Dropping arms will make this functionality unavailable.
-            This options is not available for 'BootstrappedUCB',
-            nor for 'BootstrappedTS'.
         continue_from_last : bool
             If the policy was previously fit to data, whether to assume that
             this new call to 'fit' will continue from the exact same dataset as before
@@ -417,7 +398,6 @@ class _BasePolicy:
         if X.shape[0] == 0:
             return self
 
-        use_warm = warm_start and self.has_warm_start and self.is_fitted
         continue_from_last = False if not self.is_fitted else continue_from_last
         continue_from_last = False if self.assume_unique_reward else continue_from_last
         if continue_from_last:
@@ -442,7 +422,6 @@ class _BasePolicy:
                                    force_fit = self._force_fit,
                                    force_counters = self._force_counters,
                                    prev_ovr = self._oracles if self.is_fitted else None,
-                                   warm = use_warm,
                                    force_unfit_predict = self.force_unfit_predict,
                                    arms_to_update = arms_to_update,
                                    njobs = self.njobs)

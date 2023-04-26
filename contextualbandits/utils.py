@@ -701,7 +701,7 @@ class _OneVsRest:
                  smooth=False, noise_to_smooth=True, assume_un=False,
                  partialfit=False, refit_buffer=0, deep_copy=False,
                  force_fit=False, force_counters=False,
-                 prev_ovr=None, warm=False,
+                 prev_ovr=None,
                  force_unfit_predict=False,
                  arms_to_update=None,
                  njobs=1):
@@ -1113,7 +1113,6 @@ class _LogisticUCB_n_TS_single:
         self.lambda_ = lambda_
         self.ts = ts
         self.ts_from_ci = ts_from_ci
-        self.warm_start = True
         self.sample_unique = bool(sample_unique)
         self.n_presampled = n_presampled
         self.random_state = _check_random_state(random_state)
