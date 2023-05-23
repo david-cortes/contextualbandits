@@ -17,6 +17,17 @@ class DoublyRobustEstimator:
     Estimates the expected reward for each arm, applies a correction for the actions that
     were chosen, and converts the problem to const-sensitive classification, on which the
     base algorithm is then fit.
+
+    Note
+    ----
+    If following these docs to the letter about what to pass under each argument,
+    this implementation will be theoretically incorrect as this whole library
+    doesn't follow the paradigm of producing probabilities of choosing actions, nor of
+    estimating probabilities of a previous policy.
+    Instead, it uses estimated expected rewards (that is, the rows of the estimations
+    don't sum to 1), but nevertheless, this is likely to still produce an improvement
+    over a naive approach. One may still supply post-hoc estimated probabilities if
+    feasible though.
     
     Note
     ----
@@ -164,6 +175,10 @@ class DoublyRobustEstimator:
             Rewards that were observed for the chosen actions. Must be binary rewards 0/1.
         p : array (n_samples)
             Reward estimates for the actions that were chosen by the policy.
+
+            Note that, in theory, this should be an estimate of the probabilities that the
+            actions in ``a`` would have been taken under the policy that chose these actions,
+            but passing reward estimates in its place might still produce reasonable results.
         """
         try:
             from costsensitive import RegressionOneVsRest, WeightedAllPairs
