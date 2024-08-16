@@ -304,7 +304,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
     assert type(y_onehot).__name__=='ndarray'
     assert isinstance(online, bool)
     assert isinstance(shuffle, bool)
-    assert isinstance(update_freq, bool)
+    assert isinstance(update_freq, int)
     assert X.shape[0]>update_freq
     assert X.shape[0]==y_onehot.shape[0]
     assert X.shape[0]>0
@@ -318,7 +318,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
         y_onehot=y_onehot[new_order,:]
         
     rewards_per_turn = list()
-    history_actions = np.array([])
+    history_actions = np.array([], dtype=int)
     n_choices = y_onehot.shape[1]
     
     ## initial seed
@@ -330,18 +330,20 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
         policy.partial_fit(batch_features, batch_actions, batch_rewards)
     else:
         policy.fit(batch_features, batch_actions, batch_rewards)
+
+    history_actions = np.append(history_actions, batch_actions)
         
     ## running the loop
-    for i in range(int(np.floor(features.shape[0]/batch_size))):
-        st=(i+1)*batch_size
-        end=(i+2)*batch_size
+    for i in range(1, int(np.floor(X.shape[0]/update_freq))):
+        st=(i)*update_freq
+        end=(i+1)*update_freq
         end=np.min([end, X.shape[0]])
         
         batch_features = X[st:end,:]
         batch_actions = policy.predict(batch_features)
         batch_rewards = y_onehot[np.arange(st, end), batch_actions]
         
-        rewards_per_turn.append(rewards_per_turn.sum())
+        rewards_per_turn.append(batch_rewards.sum())
         
         if online:
             policy.partial_fit(batch_features, batch_actions, batch_rewards)
