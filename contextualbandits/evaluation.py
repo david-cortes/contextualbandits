@@ -279,7 +279,7 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
         or to all historical data each time.
     shuffle : bool
         Whether to shuffle the data (X and y_onehot) before passing through it.
-        Be awarethat data is shuffled in-place.
+        Be aware that data is shuffled in-place.
     update_freq : int
         Batch size - how many observations to predict before refitting the model.
     random_state : int, None, RandomState, or Generator
@@ -296,12 +296,12 @@ def evaluateFullyLabeled(policy, X, y_onehot, online=False, shuffle=True,
         Mean reward obtained at each batch.
     """
     if type(X).__name__=='DataFrame':
-        X=X.as_matrix()
+        X=X.to_numpy()
     if type(y_onehot).__name__=='DataFrame':
-        y_onehot=y_onehot.as_matrix()
+        y_onehot=y_onehot.to_numpy()
     
-    assert type(X).__name__=='ndarray'
-    assert type(y_onehot).__name__=='ndarray'
+    assert isinstance(X, np.ndarray)
+    assert isinstance(y_onehot, np.ndarray)
     assert isinstance(online, bool)
     assert isinstance(shuffle, bool)
     assert isinstance(update_freq, int)
