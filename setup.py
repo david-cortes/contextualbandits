@@ -180,7 +180,7 @@ setup(
         'joblib>=0.13',
         'cython'
     ],
-    version = '0.3.23',
+    version = '0.3.24',
     description = 'Python Implementations of Algorithms for Contextual Bandits',
     author = 'David Cortes',
     author_email = 'david.cortes.rivera@gmail.com',
