@@ -33,7 +33,7 @@ ctypedef enum CBLAS_SIDE:
 cdef void cblas_tsyrk(
         CBLAS_ORDER Order, CBLAS_UPLO Uplo, CBLAS_TRANSPOSE Trans,
         int N, int K, real_t alpha, real_t *A, int lda, real_t beta, real_t *C, int ldc
-    ) nogil:
+    ) noexcept nogil:
     cdef char uplo
     cdef char trans
     if (Order == CblasColMajor):
@@ -67,7 +67,7 @@ cdef void cblas_tsyrk(
 cdef void cblas_tgemm(
         CBLAS_ORDER Order, CBLAS_TRANSPOSE TransA, CBLAS_TRANSPOSE TransB, int M, int N, int K,
         real_t alpha, real_t *A, int lda, real_t *B, int ldb, real_t beta, real_t *C, int ldc
-    ) nogil:
+    ) noexcept nogil:
     cdef char transA
     cdef char transB
 
@@ -108,7 +108,7 @@ cdef void cblas_tgemm(
 cdef void cblas_tgemv(
         CBLAS_ORDER order,  CBLAS_TRANSPOSE TransA,  int m, int n,
         real_t alpha, real_t  *a, int lda,  real_t  *x, int incx,  real_t beta,  real_t  *y, int incy
-    ) nogil:
+    ) noexcept nogil:
     cdef char trans
     if (order == CblasColMajor):
         if (TransA == CblasNoTrans):
@@ -135,7 +135,7 @@ cdef void cblas_tsymv(
         real_t alpha, real_t  *A, int lda,
         real_t  *X, int incX, real_t beta,
         real_t  *Y, int incY
-    ) nogil:
+    ) noexcept nogil:
     cdef char ul
     if (layout == CblasColMajor):
         if (Uplo == CblasUpper):
@@ -155,7 +155,7 @@ cdef void cblas_tsymm(
         real_t alpha, real_t  *A, int lda,
         real_t  *B, int ldb, real_t beta,
         real_t  *C, int ldc
-    ) nogil:
+    ) noexcept nogil:
     cdef char sd
     cdef char ul
 
@@ -189,7 +189,7 @@ cdef void cblas_tsyr(
         CBLAS_LAYOUT layout, CBLAS_UPLO Uplo,
         int N, real_t  alpha, real_t  *X,
         int incX, real_t  *A, int lda
-    ) nogil:
+    ) noexcept nogil:
     cdef char ul
 
     if (layout == CblasColMajor):
@@ -211,7 +211,7 @@ cdef void tsymv_dense_sp(
         real_t A[], int n_plusb,
         real_t data[], long indptr[], long indices[], long row,
         real_t outp[], bint add_bias
-    ) nogil:
+    ) noexcept nogil:
     cdef long i
     cdef long col
     cdef long rowA
@@ -229,7 +229,7 @@ cdef void tsymv_dense_sp(
 cdef real_t tdot_dense_sp(
         real_t *dense_vec, long row,
         real_t data[], long indptr[], long indices[]
-    ) nogil:
+    ) noexcept nogil:
     cdef real_t res = 0
     cdef long i
     for i in range(indptr[row], indptr[row+1]):
