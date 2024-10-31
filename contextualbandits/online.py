@@ -549,7 +549,7 @@ class _BasePolicy:
         X = _check_X_input(X)
         scores = self._score_matrix(X)
         if n == self.nchoices:
-            topN = np.argsort(scores, axis=1)
+            topN = np.argsort(-scores, axis=1)
         else:
             topN = topN_byrow(scores, n, self.njobs)
         return self._name_arms(topN)
