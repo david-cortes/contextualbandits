@@ -148,14 +148,17 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
                 raise ValueError("Invalid value for 'beta_prior'.")
         out = beta_prior
     else:
-        assert len(beta_prior) == 2
-        assert len(beta_prior[0]) == 2
-        assert isinstance(beta_prior[1], int)
-        assert isinstance(beta_prior[0][0], (int, float))
-        assert isinstance(beta_prior[0][1], (int, float))
-        assert (beta_prior[0][0] > 0.) and (beta_prior[0][1] > 0.)
+        _check_beta_prior_single(beta_prior)
         out = beta_prior
     return out
+
+def _check_beta_prior_single(beta_prior, nchoices, for_ucb=False):
+    assert len(beta_prior) == 2
+    assert len(beta_prior[0]) == 2
+    assert isinstance(beta_prior[1], int)
+    assert isinstance(beta_prior[0][0], (int, float))
+    assert isinstance(beta_prior[0][1], (int, float))
+    assert (beta_prior[0][0] > 0.) and (beta_prior[0][1] > 0.)
 
 def _check_smoothing(smoothing, nchoices):
     if smoothing is None:

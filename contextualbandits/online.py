@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np, warnings, ctypes
-from .utils import _check_constructor_input, _check_beta_prior, \
+from .utils import _check_constructor_input, _check_beta_prior, _check_beta_prior_single, \
             _check_smoothing, _check_fit_input, _check_X_input, \
             _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
@@ -354,11 +354,12 @@ class _BasePolicy:
 
     def _add_to_beta_prior(self, beta_prior):
         if beta_prior is None:
+            # Note: by this point, it already validated that 'self.beta_prior' is not a list
             beta_prior = self.beta_prior
         else:
             if not isinstance(beta_prior, tuple):
                 raise ValueError("'beta_prior' must be a tuple.")
-            beta_prior = _check_beta_prior(beta_prior)
+            _check_beta_prior_single(beta_prior)
         
         self._beta_prior_by_arm = (
             np.append(self._beta_prior_by_arm[0], beta_prior[0][0]),
