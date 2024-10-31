@@ -44,7 +44,7 @@ class DoublyRobustEstimator:
     output a number in the range :math:`[0,1]`.
     
     This technique is meant for the case of contiunous rewards in the :math:`[0,1]` interval,
-    but here it is used for the case of discrete rewards :math:`\{0,1\}`, under which it performs
+    but here it is used for the case of discrete rewards :math:`\\{0,1\\}`, under which it performs
     poorly. It is not recommended to use, but provided for comparison purposes.
     
     
@@ -61,7 +61,7 @@ class DoublyRobustEstimator:
     they were chosen they resulted in a reward, or never resulted in a reward. In such cases,
     this function includes the option to impute the "predictions" for them (which would otherwise
     always be exactly zero or one regardless of the context) by replacing them with random
-    numbers :math:`\sim \text{Beta}(3,1)` or :math:`\sim \text{Beta}(1,3)` for the cases of
+    numbers :math:`\\sim \\text{Beta}(3,1)` or :math:`\\sim \\text{Beta}(1,3)` for the cases of
     always good and always bad.
     
     This is just a wild idea though, and doesn't guarantee reasonable results in such siutation.

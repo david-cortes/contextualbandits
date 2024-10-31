@@ -608,8 +608,8 @@ class BootstrappedUCB(_BasePolicyWithExploit):
     When fitting the algorithm to data in batches (online), it's not possible to take an
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
-    distributed :math:`\sim Poisson(1)`. However, assigning random gamma-distributed weights to observations
-    produces a more stable effect, so it also has the option to assign weights randomly :math:`\sim Gamma(1,1)`.
+    distributed :math:`\\sim Poisson(1)`. However, assigning random gamma-distributed weights to observations
+    produces a more stable effect, so it also has the option to assign weights randomly :math:`\\sim Gamma(1,1)`.
     
     Parameters
     ----------
@@ -655,7 +655,7 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -767,8 +767,8 @@ class BootstrappedTS(_BasePolicyWithExploit):
     When fitting the algorithm to data in batches (online), it's not possible to take an
     exact bootstrapped sample, as the sample is not known in advance. In theory, as the sample size
     grows to infinity, the number of times that an observation appears in a bootstrapped sample is
-    distributed :math:`\sim Poisson(1)`. However, assigning random gamma-distributed weights to observations
-    produces a more stable effect, so it also has the option to assign weights randomly :math:`\sim Gamma(1,1)`.
+    distributed :math:`\\sim Poisson(1)`. However, assigning random gamma-distributed weights to observations
+    produces a more stable effect, so it also has the option to assign weights randomly :math:`\\sim Gamma(1,1)`.
 
     Note
     ----
@@ -815,7 +815,7 @@ class BootstrappedTS(_BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     sample_unique : bool
@@ -982,7 +982,7 @@ class LogisticUCB(_BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
@@ -1143,7 +1143,7 @@ class LogisticTS(_BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior``, ``smoothing``, ``ci_from_empty``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
@@ -1240,7 +1240,7 @@ class SeparateClassifiers(_BasePolicy):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -1423,7 +1423,7 @@ class EpsilonGreedy(_BasePolicy):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -1760,7 +1760,7 @@ class AdaptiveGreedy(_ActivePolicy):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -2179,7 +2179,7 @@ class ExploreFirst(_ActivePolicy):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -2461,7 +2461,7 @@ class ActiveExplorer(_ActivePolicy, _BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -2629,7 +2629,7 @@ class SoftmaxExplorer(_BasePolicy):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -2919,7 +2919,7 @@ class LinUCB(_BasePolicyWithExploit):
         only from the first arms that show rewards (if using ``ucb_from_empty=True``).
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
@@ -3119,7 +3119,7 @@ class LinTS(LinUCB):
         of observations to which it is fit.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
@@ -3239,7 +3239,7 @@ class ParametricTS(_BasePolicyWithExploit):
         Recommended to use only one of ``beta_prior`` or ``smoothing``.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     batch_train : bool
@@ -3393,7 +3393,7 @@ class PartitionedUCB(_BasePolicyWithExploit):
         Not recommended for this method.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
@@ -3539,7 +3539,7 @@ class PartitionedTS(_BasePolicyWithExploit):
         Not recommended for this method.
     noise_to_smooth : bool
         If passing ``smoothing``, whether to add a small amount of random
-        noise :math:`\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
+        noise :math:`\\sim Uniform(0, 10^{-12})` in order to break ties at random instead of
         choosing the smallest arm index.
         Ignored when passing ``smoothing=None``.
     assume_unique_reward : bool
