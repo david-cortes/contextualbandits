@@ -152,7 +152,7 @@ def _check_beta_prior(beta_prior, nchoices, for_ucb=False):
         out = beta_prior
     return out
 
-def _check_beta_prior_single(beta_prior, nchoices, for_ucb=False):
+def _check_beta_prior_single(beta_prior):
     assert len(beta_prior) == 2
     assert len(beta_prior[0]) == 2
     assert isinstance(beta_prior[1], int)
