@@ -3,6 +3,7 @@ from Cython.Distutils import build_ext
 import numpy as np
 from sys import platform
 import sys, os, subprocess, warnings, re
+import tempfile
 
 ## Modify this to make the output of the compilation tests more verbose
 silent_tests = not (("verbose" in sys.argv)
@@ -135,7 +136,7 @@ class build_ext_subclass( build_ext ):
             if not isinstance(comm, list):
                 comm = [comm]
             print("--- Checking compiler support for option '%s'" % " ".join(comm))
-            fname = "contextualbandits_compiler_testing.cpp"
+            fname = os.path.join(tempfile.gettempdir(), "contextualbandits_compiler_testing.cpp")
             with open(fname, "w") as ftest:
                 ftest.write(u"int main(int argc, char**argv) {return 0;}\n")
             try:
@@ -180,7 +181,7 @@ setup(
         'joblib>=0.13',
         'cython'
     ],
-    version = '0.3.26',
+    version = '0.3.27',
     description = 'Python Implementations of Algorithms for Contextual Bandits',
     author = 'David Cortes',
     author_email = 'david.cortes.rivera@gmail.com',
