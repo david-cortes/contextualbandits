@@ -156,7 +156,7 @@ import cloudpickle
 from sklearn.linear_model import SGDClassifier
 from contextualbandits.online import BootstrappedUCB
 
-m = BootstrappedUCB(SGDClassifier(loss="log"), nchoices = 5, batch_train = True)
+m = BootstrappedUCB(SGDClassifier(loss="log_loss"), nchoices = 5, batch_train = True)
 cloudpickle.dump(m, open("saved_ucb_model.pkl", "wb"))
 m = cloudpickle.load(open("saved_ucb_model.pkl", "rb"))
 ```
