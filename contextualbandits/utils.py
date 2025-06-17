@@ -285,7 +285,7 @@ def _check_autograd_supported(base_algorithm):
             raise ValueError("Automatic gradients for LogisticRegression only implemented without 'normalize'.")
 
     if base_algorithm.__class__.__name__ == 'SGDClassifier':
-        if base_algorithm.loss != 'log':
+        if base_algorithm.loss != 'log_loss':
             raise ValueError("Automatic gradients for LogisticRegression only implemented with logistic loss.")
         if base_algorithm.penalty != 'l2':
             raise ValueError("Automatic gradients only defined for LogisticRegression with l2 regularization.")
