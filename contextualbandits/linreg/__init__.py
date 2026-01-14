@@ -57,9 +57,9 @@ class LinearRegression(BaseEstimator):
 
     Attributes
     ----------
-    coef_ : array(n_features, ) or array(n_features + 1)
-        The estimated model coefficients. If passing ``fit_intercept=True``, the
-        intercept will correspond to the last column.
+    coef_ : array(n) or array(n+1)
+        The obtained coefficients. If passing 'fit_intercept=True', the intercept
+        will be at the last entry.
 
     Parameters
     ----------
@@ -130,12 +130,6 @@ class LinearRegression(BaseEstimator):
         Whether to use C 'float' type for the required matrices. If passing 'False',
         will use C 'double'. Be aware that memory usage for this model can grow
         very large. Can be changed after initialization.
-
-    Attributes
-    ----------
-    coef_ : array(n) or array(n+1)
-        The obtained coefficients. If passing 'fit_intercept=True', the intercept
-        will be at the last entry.
     """
     def __init__(self, lambda_=1., fit_intercept=True, method="sm",
                  calc_inv=True, precompute_ts=False,
