@@ -41,10 +41,6 @@ example/offpolicy_learning.ipynb>`_
 <http://nbviewer.jupyter.org/github/david-cortes/contextualbandits/blob/master/
 example/policy_evaluation.ipynb>`_
 
-Serializing (pickling) objects
-=================================
-Don't use `pickle` to userialize objects from this package as it's likely to fail. Use `cloudpickle` or `dill` instead, which have the same syntax and is able to serialize more types of objects.
-
 
 .. toctree::
    :maxdepth: 3
@@ -267,6 +263,33 @@ ElasticNet
     :undoc-members:
     :inherited-members:
 
+
+Other topics
+============
+
+Accessing estimator objects from online policies
+------------------------------------------------
+
+Online policies generally fit multiple user-supplied estimators. To access the corresponding estimator for a given arm, look at the attribute ``_oracles.algos`` - e.g.:
+
+.. code-block:: python
+    
+    policy = AdaptiveGreedy(...)
+    arm_id = 0
+    policy._oracles.algos[arm_id]
+
+In boostrapped estimators:
+
+.. code-block:: python
+
+    policy = BootstrappedUCB(...)
+    arm_id = 0
+    resample_id = 0
+    policy._oracles.algos[arm_id].bs_algos[resample_id]
+
+Serializing (pickling) objects
+------------------------------
+Don't use ``pickle`` to userialize objects from this package as it's likely to fail. Use ``cloudpickle`` or ``dill`` instead, which have the same syntax and is able to serialize more types of objects.
 
 Indices and tables
 ==================

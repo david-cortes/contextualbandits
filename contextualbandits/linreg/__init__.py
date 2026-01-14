@@ -55,6 +55,12 @@ class LinearRegression(BaseEstimator):
     such, the class will by default use C 'float' types (typically ``np.float32``)
     instead of C 'double' (``np.float64``), in order to save memory.
 
+    Attributes
+    ----------
+    coef_ : array(n_features, ) or array(n_features + 1)
+        The estimated model coefficients. If passing ``fit_intercept=True``, the
+        intercept will correspond to the last column.
+
     Parameters
     ----------
     lambda_ : float
