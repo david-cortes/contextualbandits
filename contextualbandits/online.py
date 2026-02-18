@@ -505,19 +505,27 @@ class _BasePolicy:
     def _score_matrix(self, X):
         return self._oracles.decision_function(X)
 
-    def _predict_random_if_unfit(self, X, output_score):
+    def _predict_random_if_unfit(self, X, output_score, output_all_scores=False):
         X = _check_X_input(X)
         if (not self._different_arm_priors) and (not isinstance(self.smoothing, np.ndarray)):
             pred = self._name_arms(self.random_state.integers(self.nchoices, size = X.shape[0]))
             score = np.repeat(1. / self.nchoices, X.shape[0])
+            if output_all_scores:
+                scores = np.tile(1. / self.nchoices, (X.shape[0], self.nchoices))
         else:
-            pred = self._predict_from_beta_prior_and_smoothing(X.shape[0])
-            score = np.max(pred, axis=1)
-            pred = self._name_arms(np.argmax(pred, axis=1))
-        if not output_score:
+            scores_matrix = self._predict_from_beta_prior_and_smoothing(X.shape[0])
+            score = np.max(scores_matrix, axis=1)
+            pred = self._name_arms(np.argmax(scores_matrix, axis=1))
+            if output_all_scores:
+                scores = scores_matrix
+        if not output_score and not output_all_scores:
             return pred
         else:
-            return {"choice" : pred, "score" : score}
+            score = score.reshape((-1, 1))
+            if output_all_scores:
+                return {"choice" : pred, "score" : score, "scores" : scores}
+            else:
+                return {"choice" : pred, "score" : score}
 
     def topN(self, X, n):
         """
@@ -560,10 +568,10 @@ class _BasePolicyWithExploit(_BasePolicy):
     def _exploit(self, X):
         return self._oracles.exploit(X)
 
-    def predict(self, X, exploit = False, output_score = False):
+    def predict(self, X, exploit = False, output_score = False, output_all_scores = False):
         """
         Selects actions according to this policy for new data.
-        
+
         Parameters
         ----------
         X : array (n_samples, n_features)
@@ -573,16 +581,36 @@ class _BasePolicyWithExploit(_BasePolicy):
             arm with the highest expected reward according to current models.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
-            
+            it with this package's offpolicy and evaluation modules.
+        output_all_scores : bool
+            Whether to output the scores for all arms/choices. If True, the returned
+            dictionary will include a 'scores' key containing the full score matrix
+            (n_samples, n_choices). These are the actual scores computed and used to
+            make the prediction. This is particularly useful for Thompson Sampling and
+            other stochastic methods where calling decision_function() multiple times
+            produces different results. When True, implies output_score=True.
+
         Returns
         -------
-        pred : array (n_samples,) or dict("choice" : array(n_samples,), "score" : array(n_samples,))
-            Actions chosen by the policy. If passing output_score=True, it will be a dictionary
-            with the chosen arm and the score that the arm got following this policy with the classifiers used.
+        pred : array (n_samples,) or dict
+            Actions chosen by the policy. If passing output_score=True or
+            output_all_scores=True, it will be a dictionary with the following keys:
+
+            - 'choice' : array (n_samples,) - Chosen arm for each observation
+            - 'score' : array (n_samples, 1) - Score of the chosen arm
+            - 'scores' : array (n_samples, n_choices) - Scores for all arms
+                         (only when output_all_scores=True)
+
+        Notes
+        -----
+        The scores matrix is computed only once per prediction call, which is critical
+        for stochastic methods like Thompson Sampling. If you need scores for all arms
+        along with predictions, use output_all_scores=True rather than calling
+        decision_function() separately, as separate calls may produce different scores
+        due to stochasticity.
         """
         if not self.is_fitted:
-            return self._predict_random_if_unfit(X, output_score)
+            return self._predict_random_if_unfit(X, output_score, output_all_scores)
 
         if exploit:
             scores = self._exploit(X)
@@ -590,11 +618,14 @@ class _BasePolicyWithExploit(_BasePolicy):
             scores = self.decision_function(X)
         pred = self._name_arms(np.argmax(scores, axis = 1))
 
-        if not output_score:
+        if not output_score and not output_all_scores:
             return pred
         else:
             score_max = np.max(scores, axis=1).reshape((-1, 1))
-            return {"choice" : pred, "score" : score_max}
+            if output_all_scores:
+                return {"choice" : pred, "score" : score_max, "scores" : scores}
+            else:
+                return {"choice" : pred, "score" : score_max}
 
 class BootstrappedUCB(_BasePolicyWithExploit):
     """
