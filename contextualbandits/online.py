@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 
 import numpy as np, warnings, ctypes
-from .utils import _check_constructor_input, _check_beta_prior, _check_beta_prior_single, \
+from .utils import _BootstrappedClassifierBase, _check_constructor_input, _check_beta_prior, _check_beta_prior_single, \
             _check_smoothing, _check_fit_input, _check_X_input, \
             _OneVsRest,\
             _BootstrappedClassifier_w_predict, _BootstrappedClassifier_w_predict_proba, \
@@ -2355,6 +2355,7 @@ class ExploreFirst(_ActivePolicy):
             
             # case 2: some predictions are within allowance, others are not
             else:
+                n_explore = self.explore_rounds - self.explore_cnt + X.shape[0]
                 scores = np.empty((X.shape[0], self.nchoices), dtype = ctypes.c_double)
                 scores[:n_explore] = self.random_state.random(size=(n_explore, self.nchoices))
                 self._choose_active(X[:n_explore], scores[:n_explore], choose=False)
