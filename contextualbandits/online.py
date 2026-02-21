@@ -583,7 +583,7 @@ class _BasePolicyWithExploit(_BasePolicy):
             Whether to output the score that this method predicted, in case it is desired to use
             it with this package's offpolicy and evaluation modules.
         output_all_scores : bool
-            Whether to output the scores for all arms/choices. If True, the returned
+            Whether to output the scores for all arms/choices. If 'True', the returned
             dictionary will include a 'scores' key containing the full score matrix
             (n_samples, n_choices). These are the actual scores computed and used to
             make the prediction. This is particularly useful for Thompson Sampling and
