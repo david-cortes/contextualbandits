@@ -599,13 +599,6 @@ class _BasePolicyWithExploit(_BasePolicy):
             - 'scores' : array (n_samples, n_choices) - Scores for all arms
                          (only when output_all_scores=True)
 
-        Notes
-        -----
-        The scores matrix is computed only once per prediction call, which is critical
-        for stochastic methods like Thompson Sampling. If you need scores for all arms
-        along with predictions, use output_all_scores=True rather than calling
-        decision_function() separately, as separate calls may produce different scores
-        due to stochasticity.
         """
         if not self.is_fitted:
             return self._predict_random_if_unfit(X, output_score, output_all_scores)
