@@ -95,6 +95,7 @@ Documentation is also internally available through docstrings (e.g. you can try 
 
 ## Recent additions
 
+* Added `output_all_scores` parameter to `predict()` method of some online policies, which returns the full score matrix that was used for the choices of arms made during the same `.predict()` call.
 * Can now pass per-arm smoothing and beta_prior hyperparameters.
 * Can now work with sparse matrices in CSR format.
 * Added functionality for ranking top-N arms instead of always picking the single best one.
