@@ -53,9 +53,9 @@ class DoublyRobustEstimator:
     
     One method to obtain reward estimates is to fit a model to the data and use its predictions as
     reward estimates. You can do so by passing an object of class
-    `contextualbandits.online.SeparateClassifiers` which should be already fitted, or by passing a
+    :obj:`contextualbandits.online.SeparateClassifiers` which should be already fitted, or by passing a
     classifier with a 'predict_proba' method, which will be put into a 'SeparateClassifiers'
-     object and fit to the same data passed to this function to obtain reward estimates.
+    object and fit to the same data passed to this function to obtain reward estimates.
     
     The estimates can make invalid predictions if there are some arms for which every time
     they were chosen they resulted in a reward, or never resulted in a reward. In such cases,

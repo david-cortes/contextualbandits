@@ -1554,7 +1554,8 @@ class EpsilonGreedy(_BasePolicy):
             return pred
         else:
             score_max = np.max(scores, axis = 1).reshape((-1, 1))
-            score_max[ix_change_rnd] = 1. / self.nchoices
+            if not exploit:
+                score_max[ix_change_rnd] = 1. / self.nchoices
             return {"choice" : pred, "score" : score_max}
 
     def _score_matrix(self, X):
