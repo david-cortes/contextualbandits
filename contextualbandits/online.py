@@ -1529,7 +1529,7 @@ class EpsilonGreedy(_BasePolicy):
             arm with the highest expected reward according to current models.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
-            it with this pakckage's offpolicy and evaluation modules.
+            it with this package's offpolicy and evaluation modules.
             
         Returns
         -------
@@ -2757,9 +2757,13 @@ class SoftmaxExplorer(_BasePolicy):
         exploit : bool
             Whether to make a prediction according to the policy, or to just choose the
             arm with the highest expected reward according to current models.
+
+            This option is mutually exclusive with ``output_score=True``.
         output_score : bool
             Whether to output the score that this method predicted, in case it is desired to use
             it with this pakckage's offpolicy and evaluation modules.
+
+            This option is mutually exclusive with ``exploit=True``.
             
         Returns
         -------
