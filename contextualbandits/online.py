@@ -2877,7 +2877,15 @@ class LinUCB(_BasePolicyWithExploit):
     The default hyperparameters here are meant to match the original reference, but
     it's recommended to change them. Particularly: use ``beta_prior`` instead of
     ``ucb_from_empty``, decrease ``alpha``, and maybe increase ``lambda_``.
-    
+
+    Note
+    ----
+    This policy also works with continuous rewards in the range ``[0,1]`` (not only
+    discrete ``{0,1}`` rewards), since it scores arms from the underlying regression's
+    predictions and does not assume those are binary. To use it that way, linearly
+    rescale the rewards into ``[0,1]`` and pass ``beta_prior=None`` and ``smoothing=None``.
+    See the "Non-binary / continuous rewards" section of the README.
+
     Parameters
     ----------
     nchoices : int or list-like
@@ -3057,7 +3065,18 @@ class LinTS(LinUCB):
     Be aware that sampling coefficients is an operation that scales poorly with
     the number of columns/features/variables. For wide datasets, it might be
     slower than a bootstrapped approach, especially when using ``sample_unique=True``.
-    
+
+    Note
+    ----
+    This policy also works with continuous rewards in the range ``[0,1]`` (not only
+    discrete ``{0,1}`` rewards), since it scores arms from the underlying regression's
+    predictions and does not assume those are binary. To use it that way, linearly
+    rescale the rewards into ``[0,1]`` and pass ``beta_prior=None`` and ``smoothing=None``.
+    Note that the default Thompson-sampling variance is large relative to a narrow
+    continuous reward band, so the learned model is best read off through
+    ``predict(X, exploit=True)``. See the "Non-binary / continuous rewards" section
+    of the README.
+
     Parameters
     ----------
     nchoices : int or list-like

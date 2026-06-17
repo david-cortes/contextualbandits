@@ -77,6 +77,29 @@ For more information, see the user guides below.
 Most of the algorithms here are meta-heuristics that take a binary classifier (such as Logistic Regression or XGBoost) as a black-box oracle.
 
 
+## Non-binary / continuous rewards
+
+As noted above, this package is designed around discrete rewards `{0,1}`. Some of the policies, however, work fine with **continuous rewards in the range `[0,1]`** without any change to the code, because they compute their arm scores as a percentile or a mean over the base estimator's `predict` output and never assume those outputs are binary.
+
+If your rewards are continuous, the contract is:
+
+* **The caller must linearly rescale rewards into `[0,1]`** before passing them as `r` (e.g. `r = (r - r_min) / (r_max - r_min)`). The library does not rescale for you.
+* Use a policy from the supported set below, with **`beta_prior=None` and `smoothing=None`** (these are the only options that introduce a dependence on the `[0,1]` range).
+
+**Supported with continuous `[0,1]` rewards (regressor-backed policies):**
+
+* `LinUCB` and `LinTS` (the built-in linear models). For `LinTS`, the default Thompson-sampling exploration variance is large relative to a narrow continuous reward band, so the learned model is best read off through `predict(X, exploit=True)`.
+* Bootstrapped policies (`BootstrappedUCB`, `BootstrappedTS`) **whose base estimator is a plain regressor** - one that has a `.predict` method but no `predict_proba`/`decision_function`, e.g. `sklearn.linear_model.LinearRegression` or `Ridge`.
+
+**Not supported / out of scope (require true `{0,1}` rewards):**
+
+* Beta-Thompson sampling and any path using a classifier base with `predict_proba`/`decision_function` - these treat rewards as Bernoulli successes/failures.
+* `PartitionedUCB` and `PartitionedTS` - these fit a `sklearn.tree.DecisionTreeClassifier` internally, which raises on continuous targets.
+* `ParametricTS` by default - it expects a quasi-logistic base whose `predict` is bounded in `[0,1]`. For continuous data, supply such a base (for example [`glum`](https://github.com/Quantco/glum), or `xgboost` with `objective="reg:logistic"`) rather than relying on a generic regressor.
+
+These cases were verified empirically (regressor-backed policies fit and predict on synthetic continuous-`[0,1]` problems and learn to pick higher-reward arms; `PartitionedUCB` raises on continuous rewards) - see `tests/test_continuous_rewards.py`.
+
+
 ## Getting started
 
 You can find detailed usage examples with public datasets in the following IPython notebooks:
