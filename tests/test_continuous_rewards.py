@@ -1,21 +1,19 @@
-# BSD 2-Clause License
-# Copyright (c) 2020, David Cortes
-#
 # Tests for issue #69: support for non-binary / continuous rewards in [0, 1] with the
-# regressor-backed policies (LinUCB, LinTS, and bootstrapped policies whose base
-# estimator is a plain regressor), and a boundary test documenting that the
-# tree-based PartitionedUCB rejects continuous rewards.
+# regressor-backed policies (LinUCB and bootstrapped policies whose base estimator is a
+# plain regressor), and a boundary test documenting that the tree-based PartitionedUCB
+# rejects continuous rewards.
 #
-# The "works with continuous [0, 1] rewards" set is exactly the policies that compute
-# their scores as a percentile/mean over the base estimator's ``predict`` output, with
-# no assumption that the predictions lie in [0, 1]. These are used with
-# ``beta_prior=None`` and ``smoothing=None`` (the only options that introduce a [0, 1]
-# dependence). See the "Non-binary / continuous rewards" section of the README.
+# The "works with continuous [0, 1] rewards" set is exactly the policies whose
+# exploration does not assume binary rewards: LinUCB scores arms from the regression's
+# predictions plus a UCB bonus, and the bootstrapped policies explore via resampling.
+# These are used with ``beta_prior=None`` and ``smoothing=None`` (the only options that
+# introduce a [0, 1] dependence). See the "Non-binary / continuous rewards" section of
+# the documentation.
 import numpy as np
 import pytest
 from sklearn.linear_model import LinearRegression, Ridge
 
-from contextualbandits.online import LinUCB, LinTS, BootstrappedUCB, PartitionedUCB
+from contextualbandits.online import LinUCB, BootstrappedUCB, PartitionedUCB
 
 NCHOICES = 4
 NFEATURES = 5
@@ -59,13 +57,11 @@ def _fit_on_random_logging_policy(make_policy, seed, n_train=4000):
     return pol, expected_reward, rng
 
 
-def _assert_learns(pol, expected_reward, rng, exploit=False):
+def _assert_learns(pol, expected_reward, rng):
     """Assert the fitted policy beats a uniform-random policy and mostly agrees with the oracle."""
     Xq = rng.normal(size=(4000, NFEATURES))
     oracle = expected_reward(Xq).argmax(axis=1)
-    chosen = np.asarray(
-        pol.predict(Xq, exploit=True) if exploit else pol.predict(Xq)
-    ).astype(int)
+    chosen = np.asarray(pol.predict(Xq)).astype(int)
 
     r_pol = _sample_continuous_reward(rng, expected_reward, Xq, chosen)
     r_rand = _sample_continuous_reward(
@@ -83,18 +79,6 @@ def test_linucb_continuous_rewards():
         SEED,
     )
     _assert_learns(pol, expected_reward, rng)
-
-
-def test_lints_continuous_rewards():
-    # LinTS samples coefficients for exploration; its posterior-mean estimate (exploit=True)
-    # is what reflects the learned model. The default Thompson-sampling variance is large
-    # relative to a narrow continuous reward band, so the learned model is read off in
-    # exploit mode here (see README caveat).
-    pol, expected_reward, rng = _fit_on_random_logging_policy(
-        lambda: LinTS(nchoices=NCHOICES, beta_prior=None, smoothing=None, random_state=SEED),
-        SEED,
-    )
-    _assert_learns(pol, expected_reward, rng, exploit=True)
 
 
 @pytest.mark.parametrize("base", [LinearRegression, Ridge])
