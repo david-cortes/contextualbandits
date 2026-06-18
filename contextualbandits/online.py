@@ -3067,6 +3067,15 @@ class LinTS(LinUCB):
     the number of columns/features/variables. For wide datasets, it might be
     slower than a bootstrapped approach, especially when using ``sample_unique=True``.
 
+    Note
+    ----
+    This policy also works with continuous rewards in the range ``[0,1]`` (not only
+    discrete ``{0,1}`` rewards), since its Thompson-sampling score is computed from the
+    underlying regression's predictions and does not assume those are binary. To use it
+    that way, linearly rescale the rewards into ``[0,1]`` and pass ``beta_prior=None`` and
+    ``smoothing=None``. See the "Non-binary / continuous rewards" section of the
+    documentation.
+
     Parameters
     ----------
     nchoices : int or list-like

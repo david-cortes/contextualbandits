@@ -49,39 +49,6 @@ example/policy_evaluation.ipynb>`_
    index
 
 
-Non-binary / continuous rewards
-=================================
-
-This package is designed around discrete rewards ``{0,1}``, and a large part of what
-makes the policy classes here work well in practice are workarounds such as ``beta_prior``
-and ``smoothing``. Some of the policies, however, might also work under several constraints
-with **continuous rewards in the range** ``[0,1]``, because they compute their arm scores
-as a percentile or mean over the base estimator's ``predict`` output and do not assume
-those outputs are binary.
-
-If your rewards are continuous, the contract is:
-
-* The caller must linearly rescale rewards into ``[0,1]`` before passing them as ``r``
-  (e.g. ``r = (r - r_min) / (r_max - r_min)``). The library does not rescale for you.
-* Use one of the policies below with ``beta_prior=None`` and ``smoothing=None`` (the
-  options that introduce a dependence on the ``[0,1]`` range).
-
-Policies that work with continuous ``[0,1]`` rewards, used with a plain regressor as the
-base estimator:
-
-* ``LinUCB``, whose upper-confidence-bound exploration bonus does not require the rewards
-  to be binary.
-* Bootstrapped policies (``BootstrappedUCB``, ``BootstrappedTS``) whose base estimator is
-  a plain regressor - one that has a ``.predict`` method but no ``predict_proba`` /
-  ``decision_function``, e.g. ``sklearn.linear_model.LinearRegression`` or ``Ridge``;
-  here the exploration comes from the bootstrap resampling rather than from any assumption
-  about the reward scale.
-
-This was verified empirically - the regressor-backed policies above fit and predict on
-synthetic continuous-``[0,1]`` problems and learn to pick higher-reward arms (see
-``tests/test_continuous_rewards.py``).
-
-
 Online Contextual Bandits
 =================================
 
@@ -323,6 +290,20 @@ In boostrapped estimators:
 Serializing (pickling) objects
 ------------------------------
 Don't use ``pickle`` to userialize objects from this package as it's likely to fail. Use ``cloudpickle`` or ``dill`` instead, which have the same syntax and is able to serialize more types of objects.
+
+Non-binary / continuous rewards
+-------------------------------
+This package is designed around discrete rewards ``{0,1}``, and a large part of what makes the policy classes here work well in practice are workarounds such as ``beta_prior`` and ``smoothing``. Some of the policies, however, might also work under several constraints with continuous rewards in the range ``[0,1]``, because they compute their arm scores as a percentile or mean over the base estimator's ``predict`` output and do not assume those outputs are binary.
+
+If your rewards are continuous, the contract is:
+
+* The caller must linearly rescale rewards into ``[0,1]`` before passing them as ``r`` (e.g. ``r = (r - r_min) / (r_max - r_min)``). The library does not rescale for you.
+* Use one of the policies below with ``beta_prior=None`` and ``smoothing=None`` (the options that introduce a dependence on the ``[0,1]`` range).
+
+Policies that work with continuous ``[0,1]`` rewards, used with a plain regressor as the base estimator:
+
+* ``LinUCB`` and ``LinTS`` - the built-in linear models, whose exploration (the UCB bonus and Thompson sampling respectively) is computed from the regression's predictions and does not assume they are binary.
+* Bootstrapped policies (``BootstrappedUCB``, ``BootstrappedTS``) whose base estimator is a plain regressor - one that has a ``.predict`` method but no ``predict_proba`` / ``decision_function``, e.g. ``sklearn.linear_model.LinearRegression`` or ``Ridge``; here the exploration comes from the bootstrap resampling rather than from any assumption about the reward scale.
 
 Indices and tables
 ==================
