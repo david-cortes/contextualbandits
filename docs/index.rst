@@ -291,19 +291,27 @@ Serializing (pickling) objects
 ------------------------------
 Don't use ``pickle`` to userialize objects from this package as it's likely to fail. Use ``cloudpickle`` or ``dill`` instead, which have the same syntax and is able to serialize more types of objects.
 
-Non-binary / continuous rewards
--------------------------------
-This package is designed around discrete rewards ``{0,1}``, and a large part of what makes the policy classes here work well in practice are workarounds such as ``beta_prior`` and ``smoothing``. Some of the policies, however, might also work under several constraints with continuous rewards in the range ``[0,1]``, because they compute their arm scores as a percentile or mean over the base estimator's ``predict`` output and do not assume those outputs are binary.
+Using a regression model as the base estimator
+----------------------------------------------
+The ``base_algorithm`` passed to a policy is normally a binary *classifier* exposing ``predict_proba`` (or ``decision_function``). Several of the policies, however, also accept a plain *regressor* - an estimator with only a ``.predict`` method, such as ``sklearn.linear_model.LinearRegression`` or ``Ridge``. With binary rewards ``r`` in ``{0,1}`` a regressor fit on the 0/1 labels estimates the conditional mean ``E[r|x] = P(r=1|x)`` directly, and the policies below select arms from those estimates.
 
-If your rewards are continuous, the contract is:
+Recommended settings when the base is a regressor: pass ``beta_prior=None`` and ``smoothing=None``. Both mechanisms assume the base outputs a probability in ``[0,1]`` - ``smoothing`` rescales the score by observation counts, and ``beta_prior`` replaces under-sampled arms with ``Beta`` draws in ``(0,1)`` - so combining them with a regressor whose output can fall outside ``[0,1]`` puts cold-start and well-fit arms on different scales. Note also that a regressor's output is *not* a calibrated probability and may fall below 0 or above 1: this is harmless for the policies whose action is an ``argmax`` over arms (they only need the relative ordering of the predictions), but any code that consumes the raw score as a probability will be off.
 
-* The caller must linearly rescale rewards into ``[0,1]`` before passing them as ``r`` (e.g. ``r = (r - r_min) / (r_max - r_min)``). The library does not rescale for you.
-* Use one of the policies below with ``beta_prior=None`` and ``smoothing=None`` (the options that introduce a dependence on the ``[0,1]`` range).
+Policies that work with a plain regressor base under binary rewards (use ``beta_prior=None``, ``smoothing=None``):
 
-Policies that work with continuous ``[0,1]`` rewards, used with a plain regressor as the base estimator:
+* ``BootstrappedUCB`` / ``BootstrappedTS`` - exploration comes from bootstrap resampling of the regressor; arms are ranked by a percentile (UCB) or a sampled estimate (TS) of the predictions.
+* ``SeparateClassifiers`` - fits one regressor per arm and picks the ``argmax`` of ``E[r|x]``.
+* ``EpsilonGreedy`` - ``argmax`` of the per-arm predictions, with random exploration that is independent of the base.
+* ``AdaptiveGreedy`` - keep the default ``decay_type="percentile"``, which calibrates the exploration threshold from the observed score distribution; with a fixed threshold (``decay_type="threshold"`` / ``percentile=None``) the threshold lives on a ``[0,1]`` scale that no longer matches an uncalibrated regressor. The threshold is always positive, so a regressor that predicts negative values tends to explore more than intended.
+* ``ExploreFirst`` - works for the default greedy exploitation. The active-sampling option (``prob_active_choice > 0`` with ``f_grad_norm="auto"``) is only supported for a small set of logistic-type estimators and will reject an arbitrary regressor.
 
-* ``LinUCB`` and ``LinTS`` - the built-in linear models, whose exploration (the UCB bonus and Thompson sampling respectively) is computed from the regression's predictions and does not assume they are binary.
-* Bootstrapped policies (``BootstrappedUCB``, ``BootstrappedTS``) whose base estimator is a plain regressor - one that has a ``.predict`` method but no ``predict_proba`` / ``decision_function``, e.g. ``sklearn.linear_model.LinearRegression`` or ``Ridge``; here the exploration comes from the bootstrap resampling rather than from any assumption about the reward scale.
+Policies that do **not** work with an arbitrary regressor base:
+
+* ``ActiveExplorer`` - its active-learning step needs per-observation gradients; with the default ``f_grad_norm="auto"`` only a fixed set of logistic-type estimators is accepted, so an arbitrary regressor must supply a custom ``f_grad_norm``.
+* ``ParametricTS`` - models each arm with a Beta-Binomial posterior whose parameters are ``pred * n`` and ``(1 - pred) * n``, which only makes sense for ``pred`` in ``[0,1]``; an out-of-range regressor output is silently clipped and the arm ends up over- or under-selected.
+* ``SoftmaxExplorer`` - runs without error, but it interprets the base output through an inverse-sigmoid and a softmax, so a regressor whose predictions leave ``(0,1)`` is silently saturated. Use it only with a base whose ``predict`` is already bounded to ``(0,1)``.
+
+The built-in linear policies ``LinUCB`` and ``LinTS`` use an internal regression model and take no ``base_algorithm``; ``LogisticUCB`` / ``LogisticTS`` and the ``Partitioned*`` policies likewise use their own built-in models.
 
 Indices and tables
 ==================
