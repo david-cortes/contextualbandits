@@ -2,12 +2,6 @@
 # method, e.g. ``sklearn.linear_model.LinearRegression`` / ``Ridge``) as the base
 # estimator, with binary rewards r in {0, 1}.
 #
-# With binary rewards a regressor fit on the 0/1 labels estimates E[r | x] = P(r = 1 | x),
-# and the policies whose action is an argmax over arms select from those estimates. These
-# are used with ``beta_prior=None`` and ``smoothing=None`` (the options that assume the base
-# outputs a probability in [0, 1]). See the "Using a regression model as the base estimator"
-# section of the documentation.
-#
 # ActiveExplorer is included as a negative case: its active-learning step needs gradients,
 # so with the default ``f_grad_norm="auto"`` it rejects an arbitrary regressor.
 import numpy as np
