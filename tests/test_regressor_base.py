@@ -85,6 +85,38 @@ def _assert_policy_beats_random(pol, reward_prob, rng):
     assert float((chosen == oracle).mean()) > 1.0 / NCHOICES  # better than chance
 
 
+class _OutOfRangeRegressor:
+    """A scikit-learn-style regressor whose predictions land outside [0, 1] with high
+    probability, used to exercise the unbounded-output path the docstrings describe.
+
+    It fits an ordinary ``LinearRegression`` on the (binary) rewards and shifts every
+    prediction by a fixed positive offset. The shift is identical across arms, so it
+    preserves each policy's arm ranking (argmax over predicted reward) — and thus the
+    learned structure — while guaranteeing the base estimator emits values well outside
+    [0, 1]. The offset is kept positive so the predictions stay above zero, matching the
+    documented caveat for threshold-based policies (e.g. ``AdaptiveGreedy``).
+    """
+
+    def __init__(self, offset=10.0):
+        self.offset = offset
+
+    def fit(self, X, y, sample_weight=None):
+        self._base = LinearRegression()
+        self._base.fit(X, y, sample_weight=sample_weight)
+        return self
+
+    def predict(self, X):
+        return self._base.predict(X) + self.offset
+
+    def get_params(self, deep=True):
+        return {"offset": self.offset}
+
+    def set_params(self, **params):
+        if "offset" in params:
+            self.offset = params["offset"]
+        return self
+
+
 def _make(cls, base):
     return lambda: cls(base(), nchoices=NCHOICES, beta_prior=None, smoothing=None, random_state=SEED)
 
@@ -102,6 +134,32 @@ def test_regressor_base_ridge():
     """A different regressor base (Ridge) also learns under binary rewards."""
     pol, reward_prob, rng = _fit_on_random_logging_policy(_make(BootstrappedUCB, Ridge), SEED)
     _assert_policy_beats_random(pol, reward_prob, rng)
+
+
+def test_regressor_base_predictions_outside_unit_interval():
+    """The base regressor may output values outside [0, 1]; policies that rank arms by
+    predicted reward still learn, because an order-preserving shift leaves the per-arm
+    argmax unchanged. This guards the documented "ideally in [0,1] but should also work
+    with regressors mostly around [0,1]" behavior by actually exercising the out-of-range
+    path, rather than relying on a [0,1]-fit LinearRegression that rarely leaves the unit
+    interval.
+    """
+    # Sanity: the made-up base genuinely predicts outside [0, 1] with high probability,
+    # so the policies below are exercised on unbounded inputs (not just incidentally).
+    reward_prob = _make_world(SEED)
+    rng = np.random.default_rng(SEED)
+    X = rng.normal(size=(2000, NFEATURES))
+    a = rng.integers(0, NCHOICES, size=2000)
+    r = _sample_binary_reward(rng, reward_prob, X, a)
+    preds = _OutOfRangeRegressor().fit(X, r).predict(X)
+    assert np.mean((preds < 0.0) | (preds > 1.0)) > 0.9
+
+    # Argmax-ranking policies still beat random under the order-preserving shift.
+    for cls in (BootstrappedUCB, SeparateClassifiers, EpsilonGreedy, AdaptiveGreedy):
+        pol, reward_prob_i, rng_i = _fit_on_random_logging_policy(
+            _make(cls, _OutOfRangeRegressor), SEED
+        )
+        _assert_policy_beats_random(pol, reward_prob_i, rng_i)
 
 
 def test_active_explorer_rejects_plain_regressor():
