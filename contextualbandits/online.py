@@ -640,7 +640,8 @@ class BootstrappedUCB(_BasePolicyWithExploit):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values ideally in [0,1], but should also work with
+               regressors outputting unbounded numbers if they mostly fall around [0, 1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
@@ -804,7 +805,8 @@ class BootstrappedTS(_BasePolicyWithExploit):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values ideally in [0,1], but should also work with
+               regressors outputting unbounded numbers if they mostly fall around [0, 1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
@@ -1231,7 +1233,8 @@ class SeparateClassifiers(_BasePolicy):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values ideally in [0,1], but should also work with
+               regressors outputting unbounded numbers if they mostly fall around [0, 1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
@@ -1413,7 +1416,8 @@ class EpsilonGreedy(_BasePolicy):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values ideally in [0,1], but should also work with
+               regressors outputting unbounded numbers if they mostly fall around [0, 1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
@@ -1732,7 +1736,8 @@ class AdaptiveGreedy(_ActivePolicy):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values in [0,1]. If not using ``active_choice``, should
+               also work with regressors outputting unbounded numbers, provided the predictions mostly fall around [0,1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or series with arm names, in which case
@@ -2124,7 +2129,8 @@ class ExploreFirst(_ActivePolicy):
         Will look for, in this order:
             1) A 'predict_proba' method with outputs (n_samples, 2), values in [0,1], rows suming to 1
             2) A 'decision_function' method with unbounded outputs (n_samples,) to which it will apply a sigmoid function.
-            3) A 'predict' method with outputs (n_samples,) with values in [0,1].
+            3) A 'predict' method with outputs (n_samples,) with values ideally in [0,1], but should also work with
+               regressors outputting unbounded numbers if they mostly fall around [0, 1].
         Can also pass a list with a different (or already-fit) classifier for each arm.
     nchoices : int or list-like
         Number of arms/labels to choose from. Can also pass a list, array, or Series with arm names, in which case
