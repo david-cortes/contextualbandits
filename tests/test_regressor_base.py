@@ -1,4 +1,4 @@
-# Tests for issue #69: using a plain regressor (an estimator with only a ``.predict``
+# Tests about using a plain regressor (an estimator with only a ``.predict``
 # method, e.g. ``sklearn.linear_model.LinearRegression`` / ``Ridge``) as the base
 # estimator, with binary rewards r in {0, 1}.
 #
@@ -32,7 +32,7 @@ def _make_world(seed):
 def _sample_binary_reward(rng, reward_prob, X, a):
     """Observed reward is a Bernoulli draw from P(r=1|x,arm) -> genuinely binary {0, 1}."""
     p = reward_prob(X)[np.arange(X.shape[0]), a]
-    return (rng.random(p.shape[0]) < p).astype(float)
+    return (rng.random(p.shape[0]) < p).astype(int)
 
 
 def _fit_on_random_logging_policy(make_policy, seed, n_train=4000):
@@ -45,7 +45,7 @@ def _fit_on_random_logging_policy(make_policy, seed, n_train=4000):
     reward_prob = _make_world(seed)
     rng = np.random.default_rng(seed)
     X = rng.normal(size=(n_train, NFEATURES))
-    a = rng.integers(0, NCHOICES, size=n_train)
+    a = rng.integers(NCHOICES, size=n_train)
     r = _sample_binary_reward(rng, reward_prob, X, a)
 
     # Sanity: rewards are genuinely binary {0, 1}, both classes present.
@@ -58,11 +58,7 @@ def _fit_on_random_logging_policy(make_policy, seed, n_train=4000):
 
 
 def _greedy_choice(pol, X):
-    """Exploitation choice if the policy exposes one, else the plain prediction."""
-    try:
-        return np.asarray(pol.predict(X, exploit=True)).astype(int)
-    except TypeError:
-        return np.asarray(pol.predict(X)).astype(int)
+    return np.asarray(pol.predict(X))
 
 
 def _assert_policy_beats_random(pol, reward_prob, rng):
