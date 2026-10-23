@@ -226,8 +226,8 @@ def evaluateDoublyRobust(pred, X, a, r, p, reward_estimator, nchoices=None,
     if type(reward_estimator)==np.ndarray:
         assert reward_estimator.shape[1]==2
         assert reward_estimator.shape[0]==X.shape[0]
-        rhat_new = reward_estimator[:, 0]
-        rhat_old = reward_estimator[:, 1]
+        rhat_new = reward_estimator[:, 0].copy()
+        rhat_old = reward_estimator[:, 1].copy()
     elif hasattr(reward_estimator, "predict_proba_separate"):
         rhat = reward_estimator.predict_proba_separate(X)
         rhat_new = rhat[np.arange(rhat.shape[0]), pred]
